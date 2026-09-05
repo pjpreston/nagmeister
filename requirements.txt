@@ -1,0 +1,3 @@
+# rbd_import.py -- loads the workbooks into DuckDB. Reads .xlsx natively via
+# the bundled excel extension, so no openpyxl/pandas is needed at load time.
+duckdb>=1.1

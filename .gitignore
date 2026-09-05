@@ -4,6 +4,12 @@ data/
 # interrupted downloads
 *.part
 
+# the DuckDB database -- rebuildable from the workbooks via rbd_import.py
+*.duckdb
+*.duckdb.wal
+
+.venv/
+
 __pycache__/
 *.py[cod]
 
