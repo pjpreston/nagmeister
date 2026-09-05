@@ -86,7 +86,20 @@ tbody td {
   overflow: hidden; text-overflow: ellipsis;
 }
 tbody tr:nth-child(even) { background: var(--zebra); }
-tbody tr:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* Hover is mixed with --bg rather than laid over as a transparent wash: over a
+   transparent mix the zebra stripe shows through, so odd and even rows
+   highlighted by different amounts and the effect on striped rows was fainter
+   still. An opaque colour makes every row highlight identically. */
+tbody tr:hover > td { background: var(--row-hover); }
+/* A bar down the leading edge, so the row is obvious without relying on a
+   colour difference alone. Drawn as a background gradient rather than an inset
+   shadow: box-shadow is what marks search hits (td.hit / td.current), and this
+   selector outranks them, so a shadow here would erase the hit outline on
+   whichever row happened to be under the cursor. Nothing reflows either way. */
+tbody tr:hover > td:first-child {
+  background-image: linear-gradient(to right, var(--accent) 0 3px, transparent 3px);
+}
 td.num { text-align: right; }
 td.null { color: var(--muted); }
 

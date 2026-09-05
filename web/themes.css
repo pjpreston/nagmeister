@@ -20,6 +20,9 @@
   --warn-bg: #fde8e8; --warn-fg: #8a1c1c; --warn-line: #f5c2c2;
   /* text drawn on top of a search hit; resolves against whatever --fg is */
   --hit-fg: var(--fg);
+  /* row hover. Opaque, so striped and unstriped rows highlight identically.
+     Derived from --accent so every theme gets it without its own value. */
+  --row-hover: color-mix(in srgb, var(--accent) 30%, var(--bg));
 }
 
 @media (prefers-color-scheme: dark) {
@@ -46,6 +49,7 @@
   --hit: #ffe9a8;  --hit-line: #d9a400; --current: #e2670c; --current-fg: #fff;
   --zebra: #edf8f1; --brand: #12734f; --brand-hi: #0c5c3e;
   --warn-bg: #fde8e8; --warn-fg: #8a1c1c; --warn-line: #f5c2c2;
+  --row-hover: #aad7c5;   /* 34% accent: solved for >=1.45 vs bg and stripe */
 }
 
 [data-theme="midnight"] {
@@ -78,6 +82,7 @@
   --hit: #f7e08a;  --hit-line: #b58900; --current: #cb4b16; --current-fg: #fdf6e3;
   --zebra: #f7f0dc; --brand: #2aa198; --brand-hi: #1d7d76;
   --warn-bg: #f6dcd7; --warn-fg: #a02c1c; --warn-line: #e3b7ae;
+  --row-hover: #adcedd;   /* 37% accent: cream bg needs a firmer push */
 }
 
 [data-theme="solarized-dark"] {
@@ -86,6 +91,7 @@
   --hit: #4a4416;  --hit-line: #b58900; --current: #cb4b16; --current-fg: #fdf6e3;
   --zebra: #01313d; --brand: #2aa198; --brand-hi: #3fc7bc;
   --warn-bg: #45222a; --warn-fg: #ffb4b4; --warn-line: #63343c;
+  --row-hover: #0a4b5c;   /* ditto */
 }
 
 [data-theme="sepia"] {
@@ -94,6 +100,7 @@
   --hit: #f4dfa2;  --hit-line: #b58a2b; --current: #c2571f; --current-fg: #fff;
   --zebra: #f2ebdd; --brand: #7a5a2e; --brand-hi: #5d4322;
   --warn-bg: #f4dcd4; --warn-fg: #8f3320; --warn-line: #dcb6a8;
+  --row-hover: #e2cdae;   /* ditto */
 }
 
 [data-theme="rose"] {
@@ -120,4 +127,5 @@
   --zebra: #101010; --brand: #ffe600; --brand-hi: #fff45f;
   --warn-bg: #000000; --warn-fg: #ff6b6b; --warn-line: #ff6b6b;
   --hit-fg: #000000;   /* white-on-yellow is unreadable; force black */
+  --row-hover: #333300;   /* an accent mix is far too quiet against pure black */
 }
