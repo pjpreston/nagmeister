@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nag Meister — race results</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Nag Meister</h1>
+  <div id="stats" class="stats">loading…</div>
+
+  <div class="find">
+    <input id="q" type="search" placeholder="Find in table…" autocomplete="off" spellcheck="false">
+    <button id="prev" title="Previous match (Shift+Enter)" disabled>&uarr;</button>
+    <button id="next" title="Next match (Enter)" disabled>&darr;</button>
+    <span id="matchinfo" class="matchinfo"></span>
+    <button id="clear" class="ghost" title="Clear filters and search">Reset</button>
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<div class="tablewrap">
+  <table id="grid">
+    <thead>
+      <tr id="headrow"></tr>
+      <tr id="filterrow"></tr>
+    </thead>
+    <tbody id="body"></tbody>
+  </table>
+  <div id="empty" class="empty" hidden>No rows match these filters.</div>
+</div>
+
+<footer>
+  <button id="first">&laquo; First</button>
+  <button id="pprev">&lsaquo; Prev</button>
+  <span id="pageinfo">—</span>
+  <button id="pnext">Next &rsaquo;</button>
+  <button id="last">Last &raquo;</button>
+  <label class="pagesize">Rows
+    <select id="limit">
+      <option>50</option><option selected>100</option><option>250</option><option>500</option>
+    </select>
+  </label>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
