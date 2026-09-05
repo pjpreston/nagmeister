@@ -1,4 +1,4 @@
-# nagmeister
+<img src="web/logo.svg" alt="NagMeister" width="360">
 
 Horse racing data tooling.
 
@@ -9,6 +9,7 @@ Horse racing data tooling.
 | `rbd_results.py` | Downloads the daily results workbooks from racing-bet-data.com |
 | `rbd_import.py` | Loads those workbooks into a DuckDB table |
 | `rbd_web.py` + `web/` | Web service for browsing, filtering and searching the table |
+| `web/logo*.svg` | Brand assets (see [Logo](#logo)) |
 | `data/` | Downloaded workbooks and the database (gitignored — reproducible from the scripts) |
 
 ## Setup
@@ -135,3 +136,33 @@ The database is opened **read-only**, so several readers can attach at once.
 DuckDB does not allow a reader alongside a writer, so close any `duckdb` CLI
 session or `rbd_import.py` run before starting the server; it reports this
 clearly if the file is locked.
+
+## Logo
+
+<img src="web/logo-mark.svg" alt="" width="72" align="left" hspace="14">
+
+A deliberately goofy, happy horse — wall-eyed, buck-toothed, one ear flopped
+over. NagMeister is meant to be fun to use and the mark should say so before a
+single row of data loads.
+
+<br clear="left">
+
+| Asset | Use |
+| --- | --- |
+| `web/logo.svg` | Horizontal lockup: mark + wordmark + tagline. Page headers, README, docs |
+| `web/logo-mark.svg` | The badge on its own. App header, avatars, anywhere square |
+| `web/favicon.svg` | Simplified sibling of the mark, for browser tabs |
+| `web/favicon.ico`, `web/favicon-32.png` | Raster fallbacks for older browsers |
+| `web/apple-touch-icon.png` | 180×180 full-bleed, iOS home screen |
+| `web/og-image.png` | 1200×630 social/link preview card |
+
+Everything is hand-written SVG — no binary source file to lose, and it stays
+crisp at any size. The rasters are generated from the SVGs; regenerate them with
+Chromium and ImageMagick if the artwork changes.
+
+`favicon.svg` exists because the full mark turns to mush below about 24px. It
+drops the blaze, nostrils and mane and keeps only what survives at 16px: the
+silhouette, two big eyes and the grin.
+
+The wordmark colour is a CSS variable (`--brand`), so it shifts to a lighter
+green in dark mode rather than going muddy.
