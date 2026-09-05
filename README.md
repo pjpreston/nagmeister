@@ -8,7 +8,7 @@ Horse racing data tooling.
 | --- | --- |
 | `rbd_results.py` | Downloads the daily results workbooks from racing-bet-data.com |
 | `rbd_import.py` | Loads those workbooks into a DuckDB table |
-| `rbd_web.py` + `web/` | Web service for browsing, filtering and searching the table |
+| `rbd_web.py` + `web/` | Web service: Racing History table and Settings |
 | `web/logo*.svg` | Brand assets (see [Logo](#logo)) |
 | `data/` | Downloaded workbooks and the database (gitignored — reproducible from the scripts) |
 
@@ -90,8 +90,9 @@ FROM race_results GROUP BY trainer ORDER BY runs DESC LIMIT 10;
 
 ## Browsing the data
 
-`rbd_web.py` serves a single page showing every column of `race_results`, with
-per-column filtering, sorting on any column, and a find-in-table search.
+`rbd_web.py` serves two tabs: **Racing History**, showing every column of
+`race_results` with per-column filtering, sorting and a find-in-table search;
+and **Settings**, which governs look and feel.
 
 ```bash
 ./nag.sh start        # start it, wait until it answers, print the URL
@@ -166,3 +167,27 @@ silhouette, two big eyes and the grin.
 
 The wordmark colour is a CSS variable (`--brand`), so it shifts to a lighter
 green in dark mode rather than going muddy.
+
+## Settings
+
+The **Settings** tab controls appearance. Both choices apply immediately and are
+remembered the next time NagMeister is opened.
+
+| Setting | Options |
+| --- | --- |
+| Theme | 13 themes — Auto (follows the OS), Light, Dark, Turf, Midnight, Slate, Nord, Solarized Light, Solarized Dark, Sepia, Rose, Mono, High Contrast |
+| Table font | 9 stacks, from system sans through Georgia to Courier. Applies to the table data only, not the surrounding interface |
+| Digit alignment | Tabular figures on or off, so prices line up in columns |
+
+Preferences live in `localStorage` under `nagmeister.prefs`. They are per-browser
+display choices, and the DuckDB file is opened read-only, so there is nowhere on
+the server to write them without adding a second writable store. A small inline
+script in `<head>` applies them before first paint, otherwise the default theme
+flashes on every load.
+
+Themes are defined in `web/themes.css`, one block of custom properties each.
+Adding a theme means adding a block and an entry in the `THEMES` array in
+`web/settings.js`; nothing else needs to know it exists. Keep the search
+highlight (`--hit`, `--hit-fg`) legible — that is the one constraint. All 13 are
+checked with an automated contrast pass: body text ≥ 4.5:1, muted text ≥ 3:1 and
+search hits ≥ 4.5:1 against their own background.
