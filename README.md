@@ -8,6 +8,7 @@ Horse racing data tooling.
 | --- | --- |
 | `rbd_results.py` | Downloads the daily results workbooks from racing-bet-data.com |
 | `rbd_import.py` | Loads those workbooks into a DuckDB table |
+| `rbd_web.py` + `web/` | Web service for browsing, filtering and searching the table |
 | `data/` | Downloaded workbooks and the database (gitignored — reproducible from the scripts) |
 
 ## Setup
@@ -85,3 +86,36 @@ SELECT trainer, count(*) AS runs,
        sum(CASE WHEN place = '1' THEN 1 ELSE 0 END) AS wins
 FROM race_results GROUP BY trainer ORDER BY runs DESC LIMIT 10;
 ```
+
+## Browsing the data
+
+`rbd_web.py` serves a single page showing every column of `race_results`, with
+per-column filtering, sorting on any column, and a find-in-table search.
+
+```bash
+.venv/bin/python rbd_web.py            # http://127.0.0.1:8000
+.venv/bin/python rbd_web.py --port 9000 --db data/nagmeister.duckdb
+```
+
+| Feature | How it works |
+| --- | --- |
+| Sort | Click any column header; click again to reverse |
+| Filter | Type in the box under a header. Text columns match on substring, or `=exact`. Numeric, date and time columns also take `>5`, `<=2.5`, `1..9` |
+| Search | Type in "Find in table"; Enter or ↓ for the next match, Shift+Enter or ↑ for the previous. Matches wrap at both ends |
+| Reset | Clears every filter, the sort and the search |
+
+The table is ~150k rows, so filtering, sorting, searching and paging all happen
+in DuckDB rather than the browser. Search returns the ordinal position of every
+matching cell within the current filtered and sorted result set, which is what
+lets next/previous jump to a match on a page that is not loaded yet — the page
+follows the match rather than the match being limited to the page.
+
+Because the search ordinals and the page query are separate SQL statements,
+every `ORDER BY` ends with `rowid`. Without a total ordering the two can break
+ties differently — 16k+ groups share `(race_date, race_time, filename)`, since
+every runner in a race does — and a match would then scroll to the wrong row.
+
+The database is opened **read-only**, so several readers can attach at once.
+DuckDB does not allow a reader alongside a writer, so close any `duckdb` CLI
+session or `rbd_import.py` run before starting the server; it reports this
+clearly if the file is locked.
