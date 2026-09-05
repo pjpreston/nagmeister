@@ -9,12 +9,15 @@
   --hit-line: #e5c100;
   --current: #ff9d2e;
   --zebra: #fafbfc;
+  --brand: #199063;
+  --brand-hi: #12734f;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #14171a; --fg: #e6e9ec; --muted: #9aa4b2; --line: #2a2f36;
     --head: #1c2126; --accent: #58a6ff; --hit: #4a3f00; --hit-line: #b99b00;
     --current: #d97706; --zebra: #181c20;
+    --brand: #42C892; --brand-hi: #63dcac;
   }
 }
 
@@ -30,7 +33,15 @@ header {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
   padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--head);
 }
-h1 { font-size: 15px; margin: 0; letter-spacing: .2px; }
+.brand {
+  display: flex; align-items: center; gap: 9px;
+  text-decoration: none; color: inherit; flex: none;
+}
+.brand img { display: block; }
+.wordmark { font-size: 17px; font-weight: 800; letter-spacing: -.3px; }
+.wordmark span { color: var(--brand); }
+.brand:hover .wordmark span { color: var(--brand-hi); }
+
 .stats { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .find { margin-left: auto; display: flex; align-items: center; gap: 6px; }
