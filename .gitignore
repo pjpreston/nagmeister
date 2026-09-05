@@ -10,6 +10,10 @@ data/
 
 .venv/
 
+# nag.sh runtime state
+.nag.pid
+.nag.log
+
 __pycache__/
 *.py[cod]
 

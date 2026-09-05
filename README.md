@@ -93,6 +93,22 @@ FROM race_results GROUP BY trainer ORDER BY runs DESC LIMIT 10;
 per-column filtering, sorting on any column, and a find-in-table search.
 
 ```bash
+./nag.sh start        # start it, wait until it answers, print the URL
+./nag.sh stop
+./nag.sh status       # running? where? how many rows?
+./nag.sh restart
+```
+
+`nag.sh` writes the pid to `.nag.pid` and output to `.nag.log`, both gitignored.
+Override the defaults with environment variables:
+
+```bash
+PORT=9000 HOST=0.0.0.0 DB=/other/path.duckdb ./nag.sh start
+```
+
+Or run it in the foreground:
+
+```bash
 .venv/bin/python rbd_web.py            # http://127.0.0.1:8000
 .venv/bin/python rbd_web.py --port 9000 --db data/nagmeister.duckdb
 ```
