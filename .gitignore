@@ -1,0 +1,11 @@
+# downloaded race data -- hundreds of MB of xlsx, re-fetchable with rbd_results.py
+data/
+
+# interrupted downloads
+*.part
+
+__pycache__/
+*.py[cod]
+
+# local-only agent permissions
+.claude/settings.local.json
