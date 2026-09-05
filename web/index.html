@@ -3,51 +3,137 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nag Meister — race results</title>
-<link rel="icon" href="data:,">
+<title>NagMeister — race results</title>
+<meta name="description" content="Historic racing form, odds movement and value — one table.">
+
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<link rel="alternate icon" href="/static/favicon.ico">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<meta name="theme-color" content="#199063">
+
+<meta property="og:title" content="NagMeister">
+<meta property="og:description" content="Historic racing form, odds movement and value — one table.">
+<meta property="og:image" content="/static/og-image.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="/static/og-image.png">
+
+<!-- Apply saved preferences before first paint, or the default theme flashes
+     on every load. Deliberately inline and dependency-free. -->
+<script>
+  try {
+    var p = JSON.parse(localStorage.getItem('nagmeister.prefs') || '{}');
+    if (p.theme) document.documentElement.dataset.theme = p.theme;
+    if (p.font) document.documentElement.style.setProperty('--table-font', p.font);
+    if (p.tabular === false) document.documentElement.style.setProperty('--table-numeric', 'normal');
+  } catch (e) { /* private mode or corrupt value: fall back to defaults */ }
+</script>
+
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
 <header>
-  <h1>Nag Meister</h1>
-  <div id="stats" class="stats">loading…</div>
+  <a class="brand" href="#racing" title="NagMeister">
+    <img src="/static/logo-mark.svg" alt="" width="38" height="38">
+    <span class="wordmark">Nag<span>Meister</span></span>
+  </a>
 
-  <div class="find">
-    <input id="q" type="search" placeholder="Find in table…" autocomplete="off" spellcheck="false">
-    <button id="prev" title="Previous match (Shift+Enter)" disabled>&uarr;</button>
-    <button id="next" title="Next match (Enter)" disabled>&darr;</button>
-    <span id="matchinfo" class="matchinfo"></span>
-    <button id="clear" class="ghost" title="Clear filters and search">Reset</button>
-  </div>
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button role="tab" id="tab-racing" aria-controls="panel-racing" aria-selected="true" data-tab="racing">
+      Racing History
+    </button>
+    <button role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false" data-tab="settings">
+      Settings
+    </button>
+  </nav>
 </header>
 
 <div id="banner" class="banner" hidden></div>
 
-<div class="tablewrap">
-  <table id="grid">
-    <thead>
-      <tr id="headrow"></tr>
-      <tr id="filterrow"></tr>
-    </thead>
-    <tbody id="body"></tbody>
-  </table>
-  <div id="empty" class="empty" hidden>No rows match these filters.</div>
-</div>
+<!-- ──────────────────────────── Racing History ───────────────────────────── -->
+<section id="panel-racing" class="panel" role="tabpanel" aria-labelledby="tab-racing">
+  <div class="toolbar">
+    <div id="stats" class="stats">loading…</div>
+    <div class="find">
+      <input id="q" type="search" placeholder="Find in table…" autocomplete="off" spellcheck="false">
+      <button id="prev" title="Previous match (Shift+Enter)" disabled>&uarr;</button>
+      <button id="next" title="Next match (Enter)" disabled>&darr;</button>
+      <span id="matchinfo" class="matchinfo"></span>
+      <button id="clear" class="ghost" title="Clear filters and search">Reset</button>
+    </div>
+  </div>
 
-<footer>
-  <button id="first">&laquo; First</button>
-  <button id="pprev">&lsaquo; Prev</button>
-  <span id="pageinfo">—</span>
-  <button id="pnext">Next &rsaquo;</button>
-  <button id="last">Last &raquo;</button>
-  <label class="pagesize">Rows
-    <select id="limit">
-      <option>50</option><option selected>100</option><option>250</option><option>500</option>
-    </select>
-  </label>
-</footer>
+  <div class="tablewrap">
+    <table id="grid">
+      <thead>
+        <tr id="headrow"></tr>
+        <tr id="filterrow"></tr>
+      </thead>
+      <tbody id="body"></tbody>
+    </table>
+    <div id="empty" class="empty" hidden>No rows match these filters.</div>
+  </div>
 
+  <footer>
+    <button id="first">&laquo; First</button>
+    <button id="pprev">&lsaquo; Prev</button>
+    <span id="pageinfo">—</span>
+    <button id="pnext">Next &rsaquo;</button>
+    <button id="last">Last &raquo;</button>
+    <label class="pagesize">Rows
+      <select id="limit">
+        <option>50</option><option selected>100</option><option>250</option><option>500</option>
+      </select>
+    </label>
+  </footer>
+</section>
+
+<!-- ────────────────────────────── Settings ───────────────────────────────── -->
+<section id="panel-settings" class="panel settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+  <div class="settings-inner">
+
+    <section class="card">
+      <h2>Theme</h2>
+      <p class="hint">Applies immediately and is remembered next time you open NagMeister.</p>
+      <div id="themes" class="swatches"></div>
+    </section>
+
+    <section class="card">
+      <h2>Table font</h2>
+      <p class="hint">Used for the data in the Racing History table; the rest of the interface is unchanged.</p>
+      <div class="fontrow">
+        <select id="fontpick" aria-label="Table font"></select>
+        <label class="check">
+          <input type="checkbox" id="tabular" checked>
+          Line up digits in columns
+        </label>
+      </div>
+      <div class="preview">
+        <table>
+          <thead><tr><th>Horse</th><th>Trainer</th><th>BSP</th><th>Place</th></tr></thead>
+          <tbody>
+            <tr><td>Silky Robin</td><td>Brian Toomey</td><td>3.50</td><td>1</td></tr>
+            <tr><td>Straitouttacompton</td><td>Michael Chapman</td><td>51.00</td><td>PU</td></tr>
+            <tr><td>Eightytwo Team</td><td>Clare Ellam</td><td>7.00</td><td>3</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Reset</h2>
+      <p class="hint">Restore the default theme and font.</p>
+      <button id="resetprefs">Reset appearance</button>
+    </section>
+
+  </div>
+</section>
+
+<div id="savedmsg" class="savedmsg" hidden>Saved</div>
+
+<script src="/static/settings.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

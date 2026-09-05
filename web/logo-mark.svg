@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="nmTitle">
+  <title id="nmTitle">NagMeister</title>
+  <defs>
+    <linearGradient id="nmBadge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#42C892"/>
+      <stop offset="1" stop-color="#199063"/>
+    </linearGradient>
+    <linearGradient id="nmCoat" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#D0904F"/>
+      <stop offset="1" stop-color="#A66832"/>
+    </linearGradient>
+    <!-- one ear shape, reused so both ears match -->
+    <path id="nmEar" d="M0 0c-15-14-17-40-10-56 4-9 16-9 20 0 7 16 5 42-10 56z"/>
+  </defs>
+
+  <circle cx="128" cy="128" r="124" fill="url(#nmBadge)"/>
+
+  <!-- Ears sit behind the head. Heavy outlines keep everything separable at 16px. -->
+  <g stroke="#5B3A1F" stroke-width="7" stroke-linejoin="round">
+    <g transform="translate(86 96) rotate(-20)">
+      <use href="#nmEar" fill="url(#nmCoat)"/>
+      <use href="#nmEar" fill="#EFA3AE" stroke="none" transform="translate(0 -9) scale(.52)"/>
+    </g>
+    <!-- right ear flopped outward: the goofy asymmetry -->
+    <g transform="translate(172 100) rotate(64)">
+      <use href="#nmEar" fill="#BE8244"/>
+      <use href="#nmEar" fill="#E094A0" stroke="none" transform="translate(0 -9) scale(.52)"/>
+    </g>
+
+    <!-- head -->
+    <path d="M128 60c34 0 56 22 56 55 0 13-3 24-6 34-3 13-5 23-5 34 0 21-18 34-45 34s-45-13-45-34c0-11-2-21-5-34-3-10-6-21-6-34 0-33 22-55 56-55z" fill="url(#nmCoat)"/>
+
+    <!-- blaze -->
+    <path d="M128 74c8 0 14 6 14 14 0 8-3 13-3 21s4 13 4 21-6 13-15 13-15-5-15-13 4-13 4-21-3-13-3-21c0-8 6-14 14-14z" fill="#F7E6D0" stroke="none"/>
+
+    <!-- muzzle -->
+    <ellipse cx="128" cy="180" rx="43" ry="35" fill="#F7E6D0"/>
+  </g>
+
+  <!-- forelock: a soft mop across the brow with one daft cowlick -->
+  <path d="M79 96c-2-27 20-46 49-46s51 19 49 46c-6-11-14-14-21-9-4-11-11-16-17-16-3 0-7 1-10 4-4-4-8-6-12-6-8 0-16 6-20 18-6-6-13-3-18 9z"
+        fill="#5B3A1F"/>
+  <path d="M104 54c-9-9-9-25 0-32-3 12 2 19 10 23-4 2-7 5-10 9z" fill="#5B3A1F"/>
+
+  <!-- eyes: big, cheerfully wall-eyed, deliberately mismatched -->
+  <ellipse cx="101" cy="122" rx="21" ry="22" fill="#fff" stroke="#5B3A1F" stroke-width="5"/>
+  <ellipse cx="157" cy="123" rx="18" ry="19" fill="#fff" stroke="#5B3A1F" stroke-width="5"/>
+  <circle cx="110" cy="126" r="9.5" fill="#241C14"/>
+  <circle cx="149" cy="127" r="8" fill="#241C14"/>
+  <circle cx="113.5" cy="122" r="3.4" fill="#fff"/>
+  <circle cx="152" cy="123" r="3" fill="#fff"/>
+
+  <!-- nostrils -->
+  <ellipse cx="110" cy="167" rx="6.5" ry="9" fill="#8A5227"/>
+  <ellipse cx="146" cy="167" rx="6.5" ry="9" fill="#8A5227"/>
+
+  <!-- big daft grin with buck teeth -->
+  <path d="M99 188c7 15 19 22 29 22s22-7 29-22z" fill="#7E3A30" stroke="#5B3A1F" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M112 188h32v12c0 5-4 8-9 8h-14c-5 0-9-3-9-8z" fill="#fff"/>
+  <line x1="128" y1="188" x2="128" y2="208" stroke="#DCC9AE" stroke-width="3"/>
+</svg>

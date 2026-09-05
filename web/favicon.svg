@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="NagMeister">
+  <title>NagMeister</title>
+  <!-- Simplified sibling of logo-mark.svg for browser tabs. The full mark has
+       a blaze, nostrils and a mane that turn to mush below ~24px, so this drops
+       them and keeps only what survives: silhouette, two big eyes, one grin. -->
+  <circle cx="32" cy="32" r="32" fill="#199063"/>
+  <g transform="translate(32 33.5) scale(.78) translate(-32 -32)">
+  <g stroke="#4A2F18" stroke-width="3" stroke-linejoin="round">
+    <path d="M18 20c-4-4-5-11-3-15 1-3 5-3 6 0 2 4 1 11-3 15z" fill="#C9873F"/>
+    <path d="M46 20c4-4 5-11 3-15-1-3-5-3-6 0-2 4-1 11 3 15z" fill="#C9873F"/>
+    <path d="M32 10c11 0 18 7 18 18 0 5-1 8-2 12-1 4-2 7-2 11 0 7-6 11-14 11s-14-4-14-11c0-4-1-7-2-11-1-4-2-7-2-12 0-11 7-18 18-18z" fill="#C9873F"/>
+    <ellipse cx="32" cy="45" rx="13" ry="10" fill="#F7E6D0"/>
+  </g>
+  <path d="M17 22c0-9 7-15 15-15s15 6 15 15c-3-5-7-6-10-3-2-4-4-6-6-6s-4 2-6 6c-3-3-7-2-8 3z" fill="#4A2F18"/>
+  <circle cx="24" cy="30" r="8" fill="#fff" stroke="#4A2F18" stroke-width="2.5"/>
+  <circle cx="41" cy="30" r="8" fill="#fff" stroke="#4A2F18" stroke-width="2.5"/>
+  <circle cx="26.5" cy="31" r="4" fill="#241C14"/>
+  <circle cx="38.5" cy="31" r="4" fill="#241C14"/>
+  <path d="M24 47c2 5 5 7 8 7s6-2 8-7z" fill="#7E3A30" stroke="#4A2F18" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M27 47h10v4c0 2-1 3-3 3h-4c-2 0-3-1-3-3z" fill="#fff"/>
+  </g>
+</svg>

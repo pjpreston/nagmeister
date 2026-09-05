@@ -1,0 +1,131 @@
+/* Theme definitions.
+ *
+ * Every theme is the same set of custom properties, so nothing outside this
+ * file needs to know which one is active. `auto` (the default) follows the OS
+ * via prefers-color-scheme; every other theme is pinned by data-theme on <html>
+ * and deliberately ignores the OS setting.
+ *
+ * --hit / --hit-line / --current are the find-in-table highlight colours and
+ * must stay legible against --bg in every theme; that is the one constraint a
+ * new theme has to respect.
+ */
+
+:root,
+[data-theme="auto"],
+[data-theme="light"] {
+  --bg: #ffffff;   --fg: #1b1f24;   --muted: #667085;  --line: #e3e6ea;
+  --head: #f6f7f9; --accent: #1f6feb;
+  --hit: #fff3b0;  --hit-line: #e5c100; --current: #ff9d2e; --current-fg: #1b1f24;
+  --zebra: #fafbfc; --brand: #199063; --brand-hi: #12734f;
+  --warn-bg: #fde8e8; --warn-fg: #8a1c1c; --warn-line: #f5c2c2;
+  /* text drawn on top of a search hit; resolves against whatever --fg is */
+  --hit-fg: var(--fg);
+  /* row hover. Opaque, so striped and unstriped rows highlight identically.
+     Derived from --accent so every theme gets it without its own value. */
+  --row-hover: color-mix(in srgb, var(--accent) 30%, var(--bg));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root, [data-theme="auto"] {
+    --bg: #14171a;   --fg: #e6e9ec;   --muted: #9aa4b2;  --line: #2a2f36;
+    --head: #1c2126; --accent: #58a6ff;
+    --hit: #4a3f00;  --hit-line: #b99b00; --current: #d97706; --current-fg: #14171a;
+    --zebra: #181c20; --brand: #42c892; --brand-hi: #63dcac;
+    --warn-bg: #3b1d1d; --warn-fg: #ffb4b4; --warn-line: #5a2a2a;
+  }
+}
+
+[data-theme="dark"] {
+  --bg: #14171a;   --fg: #e6e9ec;   --muted: #9aa4b2;  --line: #2a2f36;
+  --head: #1c2126; --accent: #58a6ff;
+  --hit: #4a3f00;  --hit-line: #b99b00; --current: #d97706; --current-fg: #14171a;
+  --zebra: #181c20; --brand: #42c892; --brand-hi: #63dcac;
+  --warn-bg: #3b1d1d; --warn-fg: #ffb4b4; --warn-line: #5a2a2a;
+}
+
+[data-theme="turf"] {
+  --bg: #f4fbf7;   --fg: #14291f;   --muted: #5c7a6b;  --line: #cfe6d9;
+  --head: #e4f4ea; --accent: #199063;
+  --hit: #ffe9a8;  --hit-line: #d9a400; --current: #e2670c; --current-fg: #fff;
+  --zebra: #edf8f1; --brand: #12734f; --brand-hi: #0c5c3e;
+  --warn-bg: #fde8e8; --warn-fg: #8a1c1c; --warn-line: #f5c2c2;
+  --row-hover: #aad7c5;   /* 34% accent: solved for >=1.45 vs bg and stripe */
+}
+
+[data-theme="midnight"] {
+  --bg: #0b1020;   --fg: #dfe6f5;   --muted: #8792ad;  --line: #1e2740;
+  --head: #131a2e; --accent: #7aa2ff;
+  --hit: #3d3a10;  --hit-line: #b8a52a; --current: #f0883e; --current-fg: #0b1020;
+  --zebra: #0e1426; --brand: #6ee7b7; --brand-hi: #9df3d1;
+  --warn-bg: #3a1a26; --warn-fg: #ffb3c6; --warn-line: #5c2a3c;
+}
+
+[data-theme="slate"] {
+  --bg: #1e2227;   --fg: #dde3ea;   --muted: #98a4b3;  --line: #333a43;
+  --head: #262c33; --accent: #79b8ff;
+  --hit: #4a4416;  --hit-line: #c3b23c; --current: #e8934a; --current-fg: #1e2227;
+  --zebra: #22272d; --brand: #5fd0a0; --brand-hi: #86e0bb;
+  --warn-bg: #3d2222; --warn-fg: #ffbcbc; --warn-line: #5e3232;
+}
+
+[data-theme="nord"] {
+  --bg: #2e3440;   --fg: #e5e9f0;   --muted: #9aa5b8;  --line: #3f4859;
+  --head: #353c4a; --accent: #88c0d0;
+  --hit: #4c503a;  --hit-line: #ebcb8b; --current: #d08770; --current-fg: #2e3440;
+  --zebra: #323947; --brand: #a3be8c; --brand-hi: #bdd3aa;
+  --warn-bg: #4b3238; --warn-fg: #f2b8c0; --warn-line: #6b464e;
+}
+
+[data-theme="solarized-light"] {
+  --bg: #fdf6e3;   --fg: #35434a;   --muted: #657b83;  --line: #e6ddc4;
+  --head: #f2ead3; --accent: #268bd2;
+  --hit: #f7e08a;  --hit-line: #b58900; --current: #cb4b16; --current-fg: #fdf6e3;
+  --zebra: #f7f0dc; --brand: #2aa198; --brand-hi: #1d7d76;
+  --warn-bg: #f6dcd7; --warn-fg: #a02c1c; --warn-line: #e3b7ae;
+  --row-hover: #adcedd;   /* 37% accent: cream bg needs a firmer push */
+}
+
+[data-theme="solarized-dark"] {
+  --bg: #002b36;   --fg: #d6e2e4;   --muted: #7d9294;  --line: #0d3c48;
+  --head: #04343f; --accent: #268bd2;
+  --hit: #4a4416;  --hit-line: #b58900; --current: #cb4b16; --current-fg: #fdf6e3;
+  --zebra: #01313d; --brand: #2aa198; --brand-hi: #3fc7bc;
+  --warn-bg: #45222a; --warn-fg: #ffb4b4; --warn-line: #63343c;
+  --row-hover: #0a4b5c;   /* ditto */
+}
+
+[data-theme="sepia"] {
+  --bg: #f6efe3;   --fg: #3a3025;   --muted: #877a66;  --line: #e0d4bf;
+  --head: #efe5d3; --accent: #9a6b3f;
+  --hit: #f4dfa2;  --hit-line: #b58a2b; --current: #c2571f; --current-fg: #fff;
+  --zebra: #f2ebdd; --brand: #7a5a2e; --brand-hi: #5d4322;
+  --warn-bg: #f4dcd4; --warn-fg: #8f3320; --warn-line: #dcb6a8;
+  --row-hover: #e2cdae;   /* ditto */
+}
+
+[data-theme="rose"] {
+  --bg: #fff5f7;   --fg: #3d2229;   --muted: #8a6b73;  --line: #f2d7de;
+  --head: #fbe8ed; --accent: #c2185b;
+  --hit: #ffe6a3;  --hit-line: #cfa000; --current: #d2601a; --current-fg: #fff;
+  --zebra: #fdeff2; --brand: #b0004e; --brand-hi: #8c003e;
+  --warn-bg: #f9dada; --warn-fg: #96222c; --warn-line: #e7b4b8;
+}
+
+[data-theme="mono"] {
+  --bg: #ffffff;   --fg: #111111;   --muted: #6b6b6b;  --line: #dcdcdc;
+  --head: #f2f2f2; --accent: #333333;
+  --hit: #ededed;  --hit-line: #8c8c8c; --current: #111111; --current-fg: #ffffff;
+  --zebra: #fafafa; --brand: #111111; --brand-hi: #444444;
+  --warn-bg: #eeeeee; --warn-fg: #222222; --warn-line: #cccccc;
+}
+
+/* Deliberately blunt: maximum contrast, no subtle greys, for low-vision use. */
+[data-theme="contrast"] {
+  --bg: #000000;   --fg: #ffffff;   --muted: #d0d0d0;  --line: #ffffff;
+  --head: #000000; --accent: #ffe600;
+  --hit: #ffe600;  --hit-line: #ffe600; --current: #00e5ff; --current-fg: #000000;
+  --zebra: #101010; --brand: #ffe600; --brand-hi: #fff45f;
+  --warn-bg: #000000; --warn-fg: #ff6b6b; --warn-line: #ff6b6b;
+  --hit-fg: #000000;   /* white-on-yellow is unreadable; force black */
+  --row-hover: #333300;   /* an accent mix is far too quiet against pure black */
+}
