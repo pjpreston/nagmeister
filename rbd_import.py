@@ -22,7 +22,7 @@ is columnar, which suits the aggregate-heavy queries this data is for.
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from _venv import use_venv
@@ -33,6 +33,7 @@ import duckdb  # noqa: E402
 
 DEFAULT_DB = Path("data/nagmeister.duckdb")
 DEFAULT_DATA_DIR = Path("data/results")
+DEFAULT_PRERACE_DIR = Path("data/pre-race")
 SHEET = "Results"
 TABLE = "race_results"
 LEDGER = "loaded_files"
@@ -93,15 +94,130 @@ COLUMNS = [
 ]
 N_COLS = len(COLUMNS)
 
+# --------------------------------------------------------------- pre-race ---
+#
+# The pre-race workbook downloaded by rbd_prerace.py is a different animal to
+# the results file, so it gets its own table.
+#
+# It has one sheet per meeting (named after the racecourse, so the names change
+# every day) plus "Combined" and "Selections". Combined is the union of the
+# per-meeting sheets and is the only reliably named one, so that is what loads.
+#
+# A row is not a runner in today's race: it is one *past run* by a horse that is
+# declared today, tagged in the last column with the race it is running in
+# today. So the table is the form book for today's card. That is why the delete
+# key for a re-run is prerace_date -- the day the file is for -- and not the
+# race_date on the row, which is historic.
+#
+# Types come from scanning every value in the available workbooks, same as
+# above. The ones that bite:
+#   Place, LTO Pos    'BD', 'RR', 'PU', 'DSQ' alongside finishing positions
+#   Race Rating       rating bands like '0-95', not a number
+#   Tick Incr IR etc  '-' for missing
+#   % SP Drop/Incr    '-' and 'NA' for missing
+#   Winning Distance  '3¾', '½'
+#   Up in Trip        'YES' / 'NO'
+#   Headgear          'None' as a literal string, not a null
+PRERACE_TABLE = "prerace_form"
+PRERACE_SHEET = "Combined"
+
+#      excel, source header,          db column,             type
+PRERACE_COLUMNS = [
+    ("A",  "Date",                    "race_date",           "DATE"),
+    ("B",  "Country",                 "country",             "VARCHAR"),
+    ("C",  "Track",                   "track",               "VARCHAR"),
+    ("D",  "Going",                   "going",               "VARCHAR"),
+    ("E",  "Racetype",                "race_type",           "VARCHAR"),
+    ("F",  "Distance",                "distance",            "VARCHAR"),
+    ("G",  "Class",                   "class",               "INTEGER"),
+    ("H",  "Time",                    "race_time",           "TIME"),
+    ("I",  "Stall",                   "stall",               "INTEGER"),
+    ("J",  "Horse",                   "horse",               "VARCHAR"),
+    ("K",  "Age",                     "age",                 "INTEGER"),
+    ("L",  "Pace",                    "pace",                "INTEGER"),
+    ("M",  "Weight",                  "weight",              "VARCHAR"),
+    ("N",  "Jockey",                  "jockey",              "VARCHAR"),
+    ("O",  "Trainer",                 "trainer",             "VARCHAR"),
+    ("P",  "SP Fav",                  "sp_fav",              "INTEGER"),
+    ("Q",  "Industry SP",             "industry_sp",         "DOUBLE"),
+    ("R",  "Betfair SP",              "betfair_sp",          "DOUBLE"),
+    ("S",  "IP Min",                  "ip_min",              "DOUBLE"),
+    ("T",  "IP Max",                  "ip_max",              "DOUBLE"),
+    ("U",  "Pred ISP",                "pred_isp",            "DOUBLE"),
+    ("V",  "Place",                   "place",               "VARCHAR"),
+    ("W",  "Winning Distance",        "winning_distance",    "VARCHAR"),
+    ("X",  "Runners",                 "runners",             "INTEGER"),
+    ("Y",  "Tick Drop IR",            "tick_drop_ir",        "INTEGER"),
+    ("Z",  "Tick Incr IR",            "tick_incr_ir",        "INTEGER"),
+    ("AA", "% SP Drop",               "pct_sp_drop",         "DOUBLE"),
+    ("AB", "% SP Incr",               "pct_sp_incr",         "DOUBLE"),
+    ("AC", "Runs last 18 mo",         "runs_last_18mo",      "INTEGER"),
+    ("AD", "LTO5 % SP Drop",          "lto5_pct_sp_drop",    "DOUBLE"),
+    ("AE", "LTO4 % SP Drop",          "lto4_pct_sp_drop",    "DOUBLE"),
+    ("AF", "LTO3 % SP Drop",          "lto3_pct_sp_drop",    "DOUBLE"),
+    ("AG", "LTO2 % SP Drop",          "lto2_pct_sp_drop",    "DOUBLE"),
+    ("AH", "LTO % SP Drop",           "lto_pct_sp_drop",     "DOUBLE"),
+    ("AI", "LTO5 IPL",                "lto5_ipl",            "DOUBLE"),
+    ("AJ", "LTO4 IPL",                "lto4_ipl",            "DOUBLE"),
+    ("AK", "LTO3 IPL",                "lto3_ipl",            "DOUBLE"),
+    ("AL", "LTO2 IPL",                "lto2_ipl",            "DOUBLE"),
+    ("AM", "LTO IPL",                 "lto_ipl",             "DOUBLE"),
+    ("AN", "Wins L5",                 "wins_l5",             "INTEGER"),
+    ("AO", "Avg % SP Drop L5",        "avg_pct_sp_drop_l5",  "DOUBLE"),
+    ("AP", "Avg % SP Drop last 18 mo", "avg_pct_sp_drop_18mo", "DOUBLE"),
+    ("AQ", "RBD Rating",              "rbd_rating",          "INTEGER"),
+    ("AR", "RBD Rank",                "rbd_rank",            "INTEGER"),
+    ("AS", "Prev Races",              "prev_races",          "INTEGER"),
+    ("AT", "Days Since LTO",          "days_since_lto",      "INTEGER"),
+    ("AU", "Course Winner",           "course_winner",       "VARCHAR"),
+    ("AV", "Distance Winner",         "distance_winner",     "VARCHAR"),
+    ("AW", "Cla diff since LTO",      "class_diff_lto",      "INTEGER"),
+    ("AX", "OR diff since LTO",       "or_diff_lto",         "INTEGER"),
+    ("AY", "Crs Wins",                "course_wins",         "INTEGER"),
+    ("AZ", "Dist Wins",               "distance_wins",       "INTEGER"),
+    ("BA", "Class Wins",              "class_wins",          "INTEGER"),
+    ("BB", "Going Wins",              "going_wins",          "INTEGER"),
+    ("BC", "Dist (F)",                "distance_furlongs",   "DOUBLE"),
+    ("BD", "Up in Trip",              "up_in_trip",          "VARCHAR"),
+    ("BE", "WGT (Lbs)",               "weight_lbs",          "INTEGER"),
+    ("BF", "WGT diff since LTO",      "weight_diff_lto",     "INTEGER"),
+    ("BG", "Tear Weight",             "tear_weight",         "INTEGER"),
+    ("BH", "Race Rating",             "race_rating",         "VARCHAR"),
+    ("BI", "DOB %",                   "dob_pct",             "DOUBLE"),
+    ("BJ", "DOB P/L £1",              "dob_pl_1",            "DOUBLE"),
+    ("BK", "PRB",                     "prb",                 "DOUBLE"),
+    ("BL", "PRB To Date",             "prb_to_date",         "DOUBLE"),
+    ("BM", "LTO Pos",                 "lto_pos",             "VARCHAR"),
+    ("BN", "Tick Drop",               "tick_drop",           "INTEGER"),
+    ("BO", "10 B2L",                  "b2l_10",              "DOUBLE"),
+    ("BP", "25 B2L",                  "b2l_25",              "DOUBLE"),
+    ("BQ", "50 B2L",                  "b2l_50",              "DOUBLE"),
+    ("BR", "10 B2L To Date",          "b2l_10_to_date",      "DOUBLE"),
+    ("BS", "25 B2L To Date",          "b2l_25_to_date",      "DOUBLE"),
+    ("BT", "50 B2L To Date",          "b2l_50_to_date",      "DOUBLE"),
+    ("BU", "OR",                      "official_rating",     "INTEGER"),
+    ("BV", "Headgear",                "headgear",            "VARCHAR"),
+    ("BW", "BF Rank",                 "bf_rank",             "INTEGER"),
+    ("BX", "Todays Race",             "todays_race",         "VARCHAR"),
+]
+N_PRERACE_COLS = len(PRERACE_COLUMNS)
+
 # Excel's day zero. 1899-12-30 rather than 12-31 absorbs the 1900 leap-year bug.
 EXCEL_EPOCH = "DATE '1899-12-30'"
 
 
 def ddl():
-    cols = ",\n".join(f"    {db:<18} {typ}" for _, _, db, typ in COLUMNS)
+    cols = ",\n".join(f"    {db:<22} {typ}" for _, _, db, typ in COLUMNS)
+    pre = ",\n".join(f"    {db:<22} {typ}" for _, _, db, typ in PRERACE_COLUMNS)
     return (
         f"CREATE TABLE IF NOT EXISTS {TABLE} (\n{cols},\n"
-        f"    {'filename':<18} VARCHAR NOT NULL\n);\n\n"
+        f"    {'filename':<22} VARCHAR NOT NULL\n);\n\n"
+        f"CREATE TABLE IF NOT EXISTS {PRERACE_TABLE} (\n{pre},\n"
+        # the day the workbook is for. race_date above is the historic date of
+        # the run being described, so this is what identifies a load and what a
+        # re-run deletes on.
+        f"    {'prerace_date':<22} DATE NOT NULL,\n"
+        f"    {'filename':<22} VARCHAR NOT NULL\n);\n\n"
         f"CREATE TABLE IF NOT EXISTS {LEDGER} (\n"
         f"    filename    VARCHAR PRIMARY KEY,\n"
         f"    source_path VARCHAR,\n"
@@ -153,19 +269,19 @@ def sq(s):
     return "'" + str(s).replace("'", "''") + "'"
 
 
-def source_columns(con, path):
-    """The workbook's own first 36 column names, which we map to ours by position.
+def source_columns(con, path, sheet=SHEET, n=N_COLS):
+    """The workbook's own first n column names, which we map to ours by position.
 
-    Matching by name would be wrong: the AH header is '1 min ' in most files and
-    '1 min' in the ten most recent ones.
+    Matching by name would be wrong: in the results files the AH header is
+    '1 min ' in most and '1 min' in the ten most recent.
     """
     rows = con.execute(
-        f"DESCRIBE SELECT * FROM read_xlsx({sq(path)}, sheet={sq(SHEET)}, all_varchar=true)"
+        f"DESCRIBE SELECT * FROM read_xlsx({sq(path)}, sheet={sq(sheet)}, all_varchar=true)"
     ).fetchall()
     names = [r[0] for r in rows]
-    if len(names) < N_COLS:
-        raise ValueError(f"expected >= {N_COLS} columns, found {len(names)}")
-    return names[:N_COLS]
+    if len(names) < n:
+        raise ValueError(f"expected >= {n} columns in {sheet!r}, found {len(names)}")
+    return names[:n]
 
 
 def load_file(con, path, force=False):
@@ -207,6 +323,57 @@ def load_file(con, path, force=False):
     return n
 
 
+def find_prerace_file(data_dir, day):
+    """The pre-race workbook for one day, wherever rbd_prerace.py filed it."""
+    root = Path(data_dir)
+    stamp = day.strftime("%d%m%Y")
+    hits = [p for p in sorted(root.rglob("*.xlsx")) if stamp in p.name]
+    if not hits:
+        raise SystemExit(
+            f"no pre-race file for {day:%d/%m/%Y} under {root} "
+            f"-- run rbd_prerace.py first"
+        )
+    return hits[0]
+
+
+def load_prerace(con, path, day):
+    """Load one pre-race workbook, replacing anything already held for that day.
+
+    Re-runnable by construction: the delete and the insert share a transaction,
+    so a failure part-way leaves the previous load intact rather than a table
+    with the old rows gone and the new ones missing.
+    """
+    path = Path(path)
+    src = source_columns(con, path, sheet=PRERACE_SHEET, n=N_PRERACE_COLS)
+    selects = ",\n       ".join(
+        f"{cast_expr(src[i], typ)} AS {db}"
+        for i, (_, _, db, typ) in enumerate(PRERACE_COLUMNS)
+    )
+    not_blank = " OR ".join(f'NULLIF(TRIM("{c}"), \'\') IS NOT NULL' for c in src)
+
+    con.execute("BEGIN TRANSACTION")
+    try:
+        removed = con.execute(
+            f"SELECT count(*) FROM {PRERACE_TABLE} WHERE prerace_date = ?", [day]
+        ).fetchone()[0]
+        con.execute(f"DELETE FROM {PRERACE_TABLE} WHERE prerace_date = ?", [day])
+        con.execute(
+            f"INSERT INTO {PRERACE_TABLE} SELECT\n       {selects},\n"
+            f"       DATE '{day:%Y-%m-%d}' AS prerace_date,\n"
+            f"       {sq(path.name)} AS filename\n"
+            f"FROM read_xlsx({sq(path)}, sheet={sq(PRERACE_SHEET)}, all_varchar=true)\n"
+            f"WHERE {not_blank}"
+        )
+        n = con.execute(
+            f"SELECT count(*) FROM {PRERACE_TABLE} WHERE prerace_date = ?", [day]
+        ).fetchone()[0]
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    return n, removed
+
+
 def find_files(data_dir):
     return sorted(Path(data_dir).rglob("*.xlsx"), key=lambda p: (p.parent.name, p.name))
 
@@ -246,6 +413,20 @@ def show_status(con):
         print(f"  {name:<28} {n:>6,} rows   {when:%Y-%m-%d %H:%M}")
 
 
+def show_prerace_status(con):
+    days, rows = con.execute(
+        f"SELECT count(DISTINCT prerace_date), count(*) FROM {PRERACE_TABLE}"
+    ).fetchone()
+    print(f"\n{days} pre-race day(s), {rows:,} rows in {PRERACE_TABLE}")
+    if not days:
+        return
+    for day, n, horses in con.execute(
+        f"SELECT prerace_date, count(*), count(DISTINCT horse) FROM {PRERACE_TABLE}"
+        f" GROUP BY 1 ORDER BY 1 DESC LIMIT 5"
+    ).fetchall():
+        print(f"  {day}  {n:>7,} rows  {horses:>4} horses declared")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", default=DEFAULT_DB, help=f"DuckDB file (default {DEFAULT_DB})")
@@ -255,6 +436,11 @@ def main(argv=None):
     ap.add_argument("--force", action="store_true", help="reload files already loaded")
     ap.add_argument("--status", action="store_true", help="show what is loaded and exit")
     ap.add_argument("--schema", action="store_true", help="print the DDL and exit")
+    ap.add_argument("--prerace", action="store_true",
+                    help="load the pre-race workbook instead of the results files;"
+                         " today's unless --date is given")
+    ap.add_argument("--prerace-dir", default=DEFAULT_PRERACE_DIR,
+                    help=f"pre-race workbook root (default {DEFAULT_PRERACE_DIR})")
     args = ap.parse_args(argv)
 
     if args.schema:
@@ -264,6 +450,17 @@ def main(argv=None):
     con = connect(args.db)
     if args.status:
         show_status(con)
+        show_prerace_status(con)
+        return 0
+
+    if args.prerace:
+        day = parse_date(args.date) if args.date else date.today()
+        path = Path(args.file) if args.file else find_prerace_file(args.prerace_dir, day)
+        if not path.exists():
+            raise SystemExit(f"no such file: {path}")
+        n, removed = load_prerace(con, path, day)
+        note = f" (replaced {removed:,})" if removed else ""
+        print(f"{path.name}: {n:,} rows for {day:%d/%m/%Y}{note} in {PRERACE_TABLE}")
         return 0
 
     if args.file:
