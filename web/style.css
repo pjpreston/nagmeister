@@ -1,24 +1,9 @@
+@import url("/static/themes.css");
+
+/* The table's own font and digit alignment, driven by the Settings tab. */
 :root {
-  --bg: #ffffff;
-  --fg: #1b1f24;
-  --muted: #667085;
-  --line: #e3e6ea;
-  --head: #f6f7f9;
-  --accent: #1f6feb;
-  --hit: #fff3b0;
-  --hit-line: #e5c100;
-  --current: #ff9d2e;
-  --zebra: #fafbfc;
-  --brand: #199063;
-  --brand-hi: #12734f;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14171a; --fg: #e6e9ec; --muted: #9aa4b2; --line: #2a2f36;
-    --head: #1c2126; --accent: #58a6ff; --hit: #4a3f00; --hit-line: #b99b00;
-    --current: #d97706; --zebra: #181c20;
-    --brand: #42C892; --brand-hi: #63dcac;
-  }
+  --table-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --table-numeric: tabular-nums;
 }
 
 * { box-sizing: border-box; }
@@ -61,15 +46,15 @@ button:disabled { opacity: .45; cursor: default; }
 button.ghost { color: var(--muted); }
 
 .banner {
-  padding: 8px 14px; background: #fde8e8; color: #8a1c1c;
-  border-bottom: 1px solid #f5c2c2;
-}
-@media (prefers-color-scheme: dark) {
-  .banner { background: #3b1d1d; color: #ffb4b4; border-bottom-color: #5a2a2a; }
+  padding: 8px 14px; background: var(--warn-bg); color: var(--warn-fg);
+  border-bottom: 1px solid var(--warn-line);
 }
 
 .tablewrap { flex: 1; overflow: auto; position: relative; }
-table { border-collapse: separate; border-spacing: 0; font-variant-numeric: tabular-nums; }
+#grid, .preview table {
+  border-collapse: separate; border-spacing: 0;
+  font-family: var(--table-font); font-variant-numeric: var(--table-numeric);
+}
 
 thead th {
   position: sticky; top: 0; z-index: 3; background: var(--head);
@@ -93,8 +78,7 @@ thead input {
   font: inherit;
 }
 thead input:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
-thead input.active { background: #e8f0fe; }
-@media (prefers-color-scheme: dark) { thead input.active { background: #1d2b45; } }
+thead input.active { background: color-mix(in srgb, var(--accent) 14%, var(--bg)); }
 
 tbody td {
   padding: 4px 9px; border-bottom: 1px solid var(--line);
@@ -102,14 +86,27 @@ tbody td {
   overflow: hidden; text-overflow: ellipsis;
 }
 tbody tr:nth-child(even) { background: var(--zebra); }
-tbody tr:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* Hover is mixed with --bg rather than laid over as a transparent wash: over a
+   transparent mix the zebra stripe shows through, so odd and even rows
+   highlighted by different amounts and the effect on striped rows was fainter
+   still. An opaque colour makes every row highlight identically. */
+tbody tr:hover > td { background: var(--row-hover); }
+/* A bar down the leading edge, so the row is obvious without relying on a
+   colour difference alone. Drawn as a background gradient rather than an inset
+   shadow: box-shadow is what marks search hits (td.hit / td.current), and this
+   selector outranks them, so a shadow here would erase the hit outline on
+   whichever row happened to be under the cursor. Nothing reflows either way. */
+tbody tr:hover > td:first-child {
+  background-image: linear-gradient(to right, var(--accent) 0 3px, transparent 3px);
+}
 td.num { text-align: right; }
 td.null { color: var(--muted); }
 
-mark { background: var(--hit); color: inherit; border-radius: 2px; padding: 0 1px; }
+mark { background: var(--hit); color: var(--hit-fg); border-radius: 2px; padding: 0 1px; }
 td.hit { box-shadow: inset 0 0 0 1px var(--hit-line); }
 td.current { box-shadow: inset 0 0 0 2px var(--current); }
-td.current mark { background: var(--current); color: #1b1f24; }
+td.current mark { background: var(--current); color: var(--current-fg); }
 
 .empty { padding: 24px; color: var(--muted); }
 
@@ -122,4 +119,88 @@ footer {
 .pagesize select {
   font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px;
   background: var(--bg); color: var(--fg);
+}
+
+/* ───────────────────────────────── tabs ─────────────────────────────────── */
+
+.tabs { margin-left: auto; display: flex; gap: 4px; }
+.tabs button {
+  padding: 7px 15px; border: 1px solid transparent; border-radius: 7px;
+  background: none; color: var(--muted); font-weight: 600;
+}
+.tabs button:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.tabs button[aria-selected="true"] {
+  color: var(--bg); background: var(--brand); border-color: var(--brand);
+}
+.tabs button[aria-selected="true"]:hover { color: var(--bg); background: var(--brand-hi); }
+
+/* Each panel owns the space under the header and lays itself out. */
+.panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.panel[hidden] { display: none; }
+
+.toolbar {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--head);
+}
+
+/* ─────────────────────────────── settings ───────────────────────────────── */
+
+.settings { overflow: auto; }
+.settings-inner {
+  max-width: 900px; margin: 0 auto; padding: 22px 18px 48px;
+  display: flex; flex-direction: column; gap: 18px;
+}
+.card {
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px 18px 18px; background: var(--head);
+}
+.card h2 { margin: 0 0 4px; font-size: 14px; }
+.hint { margin: 0 0 14px; color: var(--muted); }
+
+.swatches {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+}
+.swatch {
+  border: 2px solid var(--line); border-radius: 9px; padding: 0;
+  background: none; cursor: pointer; overflow: hidden; text-align: left;
+}
+.swatch:hover { border-color: var(--accent); }
+.swatch[aria-pressed="true"] { border-color: var(--brand); }
+.swatch .chip { display: block; height: 46px; position: relative; }
+.swatch .chip i {
+  position: absolute; border-radius: 2px; display: block;
+}
+.swatch .chip .bar  { left: 8px; right: 8px; top: 9px;  height: 7px; }
+.swatch .chip .bar2 { left: 8px; right: 34px; top: 21px; height: 7px; }
+.swatch .chip .dot  { right: 8px; top: 20px; width: 16px; height: 16px; border-radius: 50%; }
+.swatch .name {
+  display: flex; justify-content: space-between; align-items: center; gap: 6px;
+  padding: 7px 9px; border-top: 1px solid var(--line);
+  background: var(--bg); color: var(--fg); font-weight: 600;
+}
+.swatch[aria-pressed="true"] .name::after { content: "✓"; color: var(--brand); }
+
+.fontrow { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.fontrow select {
+  font: inherit; padding: 7px 10px; min-width: 260px;
+  border: 1px solid var(--line); border-radius: 7px;
+  background: var(--bg); color: var(--fg);
+}
+.check { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+
+.preview { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg); }
+.preview table { width: 100%; }
+.preview th, .preview td {
+  padding: 6px 11px; border-bottom: 1px solid var(--line); text-align: left;
+}
+.preview th { background: var(--head); font-weight: 600; }
+.preview tr:last-child td { border-bottom: 0; }
+.preview td:nth-child(3), .preview td:nth-child(4) { text-align: right; }
+
+.savedmsg {
+  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+  padding: 8px 16px; border-radius: 999px;
+  background: var(--brand); color: var(--bg); font-weight: 600;
+  box-shadow: 0 4px 14px rgba(0,0,0,.18);
 }
