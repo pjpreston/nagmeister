@@ -110,10 +110,17 @@ def sign_in(session, user, password):
     )
     r = session.post(SIGNIN_URL, data=form, headers={"Referer": SIGNIN_URL})
     r.raise_for_status()
-    if "signout" not in r.text.lower() and "my account" not in r.text.lower():
+    page = r.text.lower()
+
+    # "My Account" is in the nav menu whether or not you are signed in, so the
+    # old check -- no "signout" AND no "my account" -- could never be true and
+    # a bad password reported "sign-in successful", then failed further on with
+    # a confusing message about the download control. What actually
+    # distinguishes a rejection is that the site re-renders the login form:
+    # verified by posting a deliberately wrong password.
+    if "signout" not in page and "pwordtextbox" in page:
         raise SystemExit("sign-in failed -- check RBD_USER / RBD_PASS")
-    else:
-        print("sign-in successful")
+    print("signed in")
     return session
 
 
