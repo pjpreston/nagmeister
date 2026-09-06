@@ -25,7 +25,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import duckdb
+from _venv import use_venv
+
+use_venv()  # must precede the third-party imports below
+
+import duckdb  # noqa: E402
 
 DEFAULT_DB = Path("data/nagmeister.duckdb")
 DEFAULT_DATA_DIR = Path("data/results")
