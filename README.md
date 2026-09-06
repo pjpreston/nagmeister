@@ -109,6 +109,45 @@ literals (`#N/A`, `#DIV/0!`), empty strings and the en-dash used for missing
 ratings all land as `NULL`. Dates arrive as Excel serials in most files and as
 `DD/MM/YYYY` text in others; both are handled.
 
+### Pre-race data
+
+`rbd_import.py --prerace` loads the workbook that `rbd_prerace.py` downloads
+into a separate `prerace_form` table.
+
+```bash
+python rbd_import.py --prerace                    # today's file
+python rbd_import.py --prerace --date 06/09/2026  # a specific day
+```
+
+It is re-runnable by design: every load deletes whatever is already held for
+that day and re-inserts, inside one transaction, so a failure part-way leaves
+the previous load intact rather than a half-replaced day.
+
+The workbook has a sheet per meeting — named after the racecourse, so the names
+change daily — plus `Combined` and `Selections`. `Combined` is the union of the
+per-meeting sheets and the only reliably named one, so that is what loads.
+
+A row is **not** a runner in today's race. It is one *past run* by a horse
+declared today, tagged with `todays_race` (`YORK / 06/09/26/17:00`). So the
+table is the form book for today's card: each declared horse contributes one row
+dated today plus one row per previous run. That is why the delete key is
+`prerace_date`, the day the file is for, rather than `race_date`, which is
+historic.
+
+```sql
+-- today's declared runners and how many past runs we hold for each
+SELECT todays_race, horse, count(*) - 1 AS previous_runs
+FROM prerace_form
+WHERE prerace_date = current_date
+GROUP BY 1, 2 ORDER BY 1, 2;
+```
+
+Types were derived the same way as the results table, by scanning every value.
+The ones that bite: `place` and `lto_pos` carry `PU`, `F`, `UR`, `BD`, `DSQ`
+alongside finishing positions; `race_rating` holds bands like `0-95`;
+`up_in_trip` is `YES`/`NO`; and `-` and `NA` appear as missing markers in the
+percentage columns.
+
 ```sql
 -- e.g. strike rate by trainer
 SELECT trainer, count(*) AS runs,
