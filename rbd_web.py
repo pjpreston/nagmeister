@@ -22,12 +22,16 @@ import argparse
 import sys
 from pathlib import Path
 
-import duckdb
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from _venv import use_venv
 
-from rbd_import import COLUMNS, TABLE
+use_venv()  # must precede the third-party imports below
+
+import duckdb  # noqa: E402
+from fastapi import FastAPI, HTTPException, Request  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+from rbd_import import COLUMNS, TABLE  # noqa: E402
 
 DEFAULT_DB = Path("data/nagmeister.duckdb")
 WEB_DIR = Path(__file__).parent / "web"

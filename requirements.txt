@@ -1,3 +1,7 @@
+# rbd_results.py -- downloads the workbooks from racing-bet-data.com
+requests>=2.31
+beautifulsoup4>=4.12
+
 # rbd_import.py -- loads the workbooks into DuckDB. Reads .xlsx natively via
 # the bundled excel extension, so no openpyxl/pandas is needed at load time.
 duckdb>=1.1

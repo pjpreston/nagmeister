@@ -31,8 +31,12 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin
 
-import requests
-from bs4 import BeautifulSoup
+from _venv import use_venv
+
+use_venv()  # must precede the third-party imports below
+
+import requests  # noqa: E402
+from bs4 import BeautifulSoup  # noqa: E402
 
 BASE = "https://www.racing-bet-data.com"
 RESULTS_URL = f"{BASE}/results/"
