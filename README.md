@@ -7,6 +7,7 @@ Horse racing data tooling.
 | Path | What it is |
 | --- | --- |
 | `rbd_results.py` | Downloads the daily results workbooks from racing-bet-data.com |
+| `rbd_prerace.py` | Downloads the daily pre-race workbook |
 | `rbd_import.py` | Loads those workbooks into a DuckDB table |
 | `rbd_web.py` + `web/` | Web service: Racing History table and Settings |
 | `web/logo*.svg` | Brand assets (see [Logo](#logo)) |
@@ -47,7 +48,34 @@ without a request, while the current month is always rechecked for new
 race days. A full backfill is several hundred MB and takes roughly 15
 minutes at the default delay.
 
-Requires `requests` and `beautifulsoup4`.
+## Getting the pre-race data
+
+`rbd_prerace.py` is the sibling of `rbd_results.py`: same site, same sign-in,
+same throttling, but the pre-race card published each morning rather than the
+results published after racing. Files land in the same shape under `pre-race`:
+
+```
+data/pre-race/2026-09/Daily - 06092026.xlsx
+data/results/2026-09/Results - 06092026.xlsx
+```
+
+```bash
+python rbd_prerace.py                  # today's pre-race file
+python rbd_prerace.py sample           # public sample, no login
+python rbd_prerace.py --skip-existing  # for a cron job: no-op if already have it
+```
+
+The workbook holds a sheet per meeting plus `Combined` and `Selections`; the
+`Combined` sheet is each runner's form history, which is the useful part for
+comparing horses before a race.
+
+The site sends every day's file as `Daily.xlsx` with no date in it, so the tool
+stamps the file date on itself — taken from the page rather than the clock, so a
+run just after midnight still files the workbook the site is actually offering.
+Without that, each day would overwrite the last.
+
+Sign-in and throttling are imported from `rbd_results.py` rather than
+reimplemented, so both tools authenticate identically and share one rate limiter.
 
 ## Loading the data into a database
 

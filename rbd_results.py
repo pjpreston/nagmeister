@@ -57,6 +57,7 @@ ARC_PANEL_ID = "sidebar_arcPanel"
 SIGNIN_WARNING_ID = "sidebar_Label3"
 FILE_RE = re.compile(r"\.(xlsx|xlsm|xls|zip|csv)$", re.I)
 COMPLETE_MARKER = ".complete"
+FILE_DATE_RE = re.compile(r"latest file for download is:\s*(\d{2}/\d{2}/\d{4})", re.I)
 
 
 class DownloadError(Exception):
@@ -213,6 +214,14 @@ def download_today(session):
     """Trigger the daily download button and save whatever file comes back.
 
     Never skipped: this file is rewritten through the day as races run.
+
+    Filed under data/results/<YYYY-MM>/ with the date stamped on, exactly as
+    the archive does. The server sends `filename=results.xlsx` with no date in
+    it, so saving under the server's name dropped a single undated file in the
+    root of data/results/ that every subsequent run overwrote, and that
+    rbd_import.py would then load under a filename carrying no date. The date
+    is taken from the page rather than the clock, so a run just after midnight
+    still files the workbook the site is actually offering.
     """
     soup = results_page(session)
     button = soup.find(
@@ -231,7 +240,26 @@ def download_today(session):
         form = hidden_fields(soup)
         form[name] = button.get("value", "Download")
         r = session.post(RESULTS_URL, data=form, headers={"Referer": RESULTS_URL})
-    return save(r, OUTDIR / safe_name(filename_from(r, "rbd-results-today.xlsx")))
+    day = page_file_date(soup)
+    if day:
+        dest = OUTDIR / f"{day.year:04d}-{day.month:02d}" / f"Results - {day:%d%m%Y}.xlsx"
+    else:
+        dest = OUTDIR / safe_name(filename_from(r, "rbd-results-today.xlsx"))
+    return save(r, dest)
+
+
+def page_file_date(soup):
+    """The date the page says its current file is for, or None.
+
+    "The date of the latest file for download is: 04/09/2026 22:24:22"
+    """
+    m = FILE_DATE_RE.search(soup.get_text(" ", strip=True))
+    if not m:
+        return None
+    try:
+        return datetime.strptime(m.group(1), "%d/%m/%Y").date()
+    except ValueError:
+        return None
 
 
 def select_month(session, value):
