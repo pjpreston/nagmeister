@@ -49,45 +49,10 @@
 
 <div id="banner" class="banner" hidden></div>
 
-<!-- Data panels are cloned from the template below, one per dataset. -->
-<div id="panels" class="panels"></div>
-
-<template id="gridtpl">
-  <div class="toolbar">
-    <div class="g-stats stats">loading…</div>
-    <div class="find">
-      <input class="g-q" type="search" placeholder="Find in table…" autocomplete="off" spellcheck="false">
-      <button type="button" class="g-prev" title="Previous match (Shift+Enter)" disabled>&uarr;</button>
-      <button type="button" class="g-next" title="Next match (Enter)" disabled>&darr;</button>
-      <span class="g-matchinfo matchinfo"></span>
-      <button type="button" class="g-clear ghost" title="Clear filters and search">Reset</button>
-    </div>
-  </div>
-
-  <div class="tablewrap">
-    <table class="grid">
-      <thead>
-        <tr class="g-headrow"></tr>
-        <tr class="g-filterrow"></tr>
-      </thead>
-      <tbody class="g-body"></tbody>
-    </table>
-    <div class="g-empty empty" hidden>No rows match these filters.</div>
-  </div>
-
-  <footer>
-    <button type="button" class="g-first">&laquo; First</button>
-    <button type="button" class="g-pprev">&lsaquo; Prev</button>
-    <span class="g-pageinfo pageinfo">—</span>
-    <button type="button" class="g-pnext">Next &rsaquo;</button>
-    <button type="button" class="g-last">Last &raquo;</button>
-    <label class="pagesize">Rows
-      <select class="g-limit">
-        <option>50</option><option selected>100</option><option>250</option><option>500</option>
-      </select>
-    </label>
-  </footer>
-</template>
+<!-- Every panel lives in here, data panels cloned from the template below and
+     inserted before Settings. They must be siblings: two flex:1 panels in
+     different parents split the height between them instead of one filling it. -->
+<div id="panels" class="panels">
 
 <!-- ────────────────────────────── Settings ───────────────────────────────── -->
 <section id="panel-settings" class="panel settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
@@ -129,6 +94,47 @@
 
   </div>
 </section>
+
+</div>
+
+<template id="gridtpl">
+  <div class="toolbar">
+    <div class="g-stats stats">loading…</div>
+    <div class="find">
+      <input class="g-q" type="search" placeholder="Find in table…" autocomplete="off" spellcheck="false">
+      <button type="button" class="g-prev" title="Previous match (Shift+Enter)" disabled>&uarr;</button>
+      <button type="button" class="g-next" title="Next match (Enter)" disabled>&darr;</button>
+      <span class="g-matchinfo matchinfo"></span>
+      <button type="button" class="g-clear ghost" title="Clear filters and search">Reset</button>
+    </div>
+  </div>
+
+  <div class="tablewrap">
+    <table class="grid">
+      <thead>
+        <tr class="g-headrow"></tr>
+        <tr class="g-filterrow"></tr>
+      </thead>
+      <tbody class="g-body"></tbody>
+    </table>
+    <div class="g-empty empty" hidden>No rows match these filters.</div>
+  </div>
+
+  <footer>
+    <button type="button" class="g-first">&laquo; First</button>
+    <button type="button" class="g-pprev">&lsaquo; Prev</button>
+    <span class="g-pageinfo pageinfo">—</span>
+    <button type="button" class="g-pnext">Next &rsaquo;</button>
+    <button type="button" class="g-last">Last &raquo;</button>
+    <label class="pagesize">Rows
+      <select class="g-limit">
+        <option>50</option><option selected>100</option><option>250</option><option>500</option>
+      </select>
+    </label>
+  </footer>
+</template>
+
+
 
 <div id="savedmsg" class="savedmsg" hidden>Saved</div>
 

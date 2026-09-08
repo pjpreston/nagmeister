@@ -312,6 +312,7 @@ const grids = new Map();
     const panels = document.getElementById('panels');
     const tpl = document.getElementById('gridtpl');
     const settingsTab = document.getElementById('tab-settings');
+    const settingsPanel = document.getElementById('panel-settings');
 
     for (const ds of datasets) {
       const btn = document.createElement('button');
@@ -331,7 +332,7 @@ const grids = new Map();
       panel.setAttribute('aria-labelledby', btn.id);
       panel.hidden = true;
       panel.appendChild(tpl.content.cloneNode(true));
-      panels.appendChild(panel);
+      panels.insertBefore(panel, settingsPanel);   // Settings stays last
 
       grids.set(ds.key, createGrid(panel, ds.key));
     }
