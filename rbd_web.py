@@ -284,6 +284,24 @@ def stats(request: Request):
             "from": str(lo), "to": str(hi)}
 
 
+# Without an explicit Cache-Control the browser applies heuristic freshness and
+# will happily reuse a cached app.js for hours without asking. After a change
+# that pairs a new index.html with a new app.js that is not a stale nicety, it
+# is a broken page: the old script runs against the new markup and, in the case
+# that prompted this, silently rendered only the Settings tab. "no-cache" still
+# permits caching -- it just requires revalidation, so the usual answer stays a
+# cheap 304 rather than a full re-download.
+NO_CACHE = "no-cache, must-revalidate"
+
+
+@app.middleware("http")
+async def revalidate_assets(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = NO_CACHE
+    return response
+
+
 @app.get("/")
 def index():
     return FileResponse(WEB_DIR / "index.html")
