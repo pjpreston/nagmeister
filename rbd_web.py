@@ -31,20 +31,59 @@ from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from rbd_import import COLUMNS, TABLE  # noqa: E402
+from rbd_import import COLUMNS, PRERACE_COLUMNS, PRERACE_TABLE, TABLE  # noqa: E402
 
 DEFAULT_DB = Path("data/nagmeister.duckdb")
 WEB_DIR = Path(__file__).parent / "web"
 MAX_MATCHES = 20_000  # cap on cells returned by one search
 PAGE_MAX = 500
 
-# db column -> (display label, type). The label is the workbook's own header,
-# which is what the user recognises. filename is ours, not from the sheet.
-COLUMN_META = [(db, header, typ) for _, header, db, typ in COLUMNS]
-COLUMN_META.append(("filename", "Source File", "VARCHAR"))
-COLUMN_NAMES = [c[0] for c in COLUMN_META]
-COLUMN_TYPE = {c[0]: c[2] for c in COLUMN_META}
 NUMERIC = {"INTEGER", "DOUBLE"}
+
+
+class Dataset:
+    """One browsable table.
+
+    Everything the API needs to serve a table lives here, so adding another is
+    a matter of adding an entry to DATASETS rather than another set of
+    endpoints. The column labels are the source workbook's own headers, which
+    are what the user recognises; filename and prerace_date are ours.
+    """
+
+    def __init__(self, key, table, label, columns, extra, order, count_distinct, date_col):
+        self.key = key
+        self.table = table
+        self.label = label
+        self.meta = [(db, header, typ) for _, header, db, typ in columns] + extra
+        self.names = [m[0] for m in self.meta]
+        self.types = {m[0]: m[2] for m in self.meta}
+        # tie-breakers appended to every ORDER BY; see order_by()
+        self.order = order
+        self.count_distinct = count_distinct
+        self.date_col = date_col
+
+
+DATASETS = {
+    "results": Dataset(
+        "results", TABLE, "Racing History", COLUMNS,
+        [("filename", "Source File", "VARCHAR")],
+        ["race_date", "race_time", "filename"], "filename", "race_date",
+    ),
+    "form": Dataset(
+        "form", PRERACE_TABLE, "Racing Form", PRERACE_COLUMNS,
+        [("prerace_date", "Card Date", "DATE"), ("filename", "Source File", "VARCHAR")],
+        # grouped by the card it belongs to, then by today's race, then the
+        # horse, so a form table reads in the order you would study it
+        ["prerace_date", "todays_race", "horse", "race_date"], "prerace_date", "race_date",
+    ),
+}
+
+
+def dataset(request):
+    key = request.query_params.get("dataset", "results")
+    if key not in DATASETS:
+        raise HTTPException(400, f"unknown dataset {key!r}")
+    return DATASETS[key]
 
 app = FastAPI(title="Nag Meister", docs_url="/api/docs")
 _db_path = DEFAULT_DB
@@ -66,14 +105,14 @@ def db():
     return _con.cursor()
 
 
-def quote(col):
-    """Validate a column name against the whitelist and quote it."""
-    if col not in COLUMN_NAMES:
+def quote(ds, col):
+    """Validate a column name against the dataset's whitelist and quote it."""
+    if col not in ds.names:
         raise HTTPException(400, f"unknown column {col!r}")
     return f'"{col}"'
 
 
-def filter_clause(col, expr):
+def filter_clause(ds, col, expr):
     """SQL + params for one column filter.
 
     Text columns match on substring, or exactly when the filter starts with
@@ -84,8 +123,8 @@ def filter_clause(col, expr):
     expr = expr.strip()
     if not expr:
         return None, []
-    q = quote(col)
-    typ = COLUMN_TYPE[col]
+    q = quote(ds, col)
+    typ = ds.types[col]
 
     if typ not in NUMERIC and typ not in ("DATE", "TIME") and expr.startswith("="):
         return f"CAST({q} AS VARCHAR) ILIKE ?", [expr[1:].strip()]
@@ -109,33 +148,35 @@ def filter_clause(col, expr):
     return f"CAST({q} AS VARCHAR) ILIKE ?", [f"%{expr}%"]
 
 
-def build_where(filters):
+def build_where(ds, filters):
     """AND together the per-column filters. Returns (sql, params)."""
     clauses, params = [], []
     for col, expr in filters.items():
-        sql, ps = filter_clause(col, expr)
+        sql, ps = filter_clause(ds, col, expr)
         if sql:
             clauses.append(sql)
             params.extend(ps)
     return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
 
 
-def order_by(sort, direction):
+def order_by(ds, sort, direction):
     """A *total* ordering, always.
 
     The search endpoint numbers rows with ROW_NUMBER() and the rows endpoint
     pages with LIMIT/OFFSET. Those are separate queries, so if the ORDER BY
     leaves ties the two can break them differently and a match ordinal then
-    points at the wrong row. 16k+ groups share (race_date, race_time, filename)
-    -- every runner in a race does -- so rowid is appended to make the order
-    unique and reproducible across both queries.
+    points at the wrong row -- in race_results 16k+ groups share
+    (race_date, race_time, filename), because every runner in a race does. So
+    rowid always terminates the sort, making it unique and reproducible across
+    both queries whichever dataset is being served.
     """
-    if sort and sort not in COLUMN_NAMES:
+    if sort and sort not in ds.names:
         raise HTTPException(400, f"unknown sort column {sort!r}")
     dirn = "DESC" if str(direction).lower() == "desc" else "ASC"
+    tail = ", ".join(ds.order + ["rowid"])
     if not sort:
-        return "ORDER BY race_date, race_time, filename, rowid"
-    return f"ORDER BY {quote(sort)} {dirn} NULLS LAST, race_date, race_time, rowid"
+        return f"ORDER BY {tail}"
+    return f"ORDER BY {quote(ds, sort)} {dirn} NULLS LAST, {tail}"
 
 
 def parse_filters(request_params):
@@ -147,34 +188,44 @@ def parse_filters(request_params):
     return out
 
 
+@app.get("/api/datasets")
+def api_datasets():
+    """The tables the UI can show, in tab order."""
+    return {"datasets": [{"key": d.key, "label": d.label} for d in DATASETS.values()]}
+
+
 @app.get("/api/columns")
-def api_columns():
-    return {"columns": [{"name": n, "label": l, "type": t} for n, l, t in COLUMN_META]}
+def api_columns(request: Request):
+    ds = dataset(request)
+    return {"dataset": ds.key,
+            "columns": [{"name": n, "label": l, "type": t} for n, l, t in ds.meta]}
 
 
 # The two data endpoints read the raw query string rather than declaring
 # parameters, because the per-column filters arrive as arbitrary f_<column> keys.
 @app.get("/api/rows")
 def rows(request: Request):
+    ds = dataset(request)
     offset = int(request.query_params.get("offset", 0) or 0)
     limit = min(max(int(request.query_params.get("limit", 100) or 100), 1), PAGE_MAX)
     sort = request.query_params.get("sort", "")
     direction = request.query_params.get("dir", "asc")
     filters = parse_filters(request.query_params.multi_items())
 
-    where, params = build_where(filters)
+    where, params = build_where(ds, filters)
     cur = db()
-    total = cur.execute(f"SELECT count(*) FROM {TABLE}{where}", params).fetchone()[0]
-    cols = ", ".join(quote(c) for c in COLUMN_NAMES)
+    total = cur.execute(f"SELECT count(*) FROM {ds.table}{where}", params).fetchone()[0]
+    cols = ", ".join(quote(ds, c) for c in ds.names)
     data = cur.execute(
-        f"SELECT {cols} FROM {TABLE}{where} {order_by(sort, direction)} LIMIT ? OFFSET ?",
+        f"SELECT {cols} FROM {ds.table}{where} {order_by(ds, sort, direction)} LIMIT ? OFFSET ?",
         params + [limit, offset],
     ).fetchall()
     return {
+        "dataset": ds.key,
         "total": total,
         "offset": offset,
         "limit": limit,
-        "columns": COLUMN_NAMES,
+        "columns": ds.names,
         "rows": [[None if v is None else str(v) for v in row] for row in data],
     }
 
@@ -186,6 +237,7 @@ def search(request: Request):
     Returns [[row_ordinal, column_name], ...] so the page can jump straight to
     the row containing the nth match even if it is not currently loaded.
     """
+    ds = dataset(request)
     q = (request.query_params.get("q") or "").strip()
     if not q:
         return {"query": "", "total": 0, "matches": [], "truncated": False}
@@ -193,13 +245,13 @@ def search(request: Request):
     sort = request.query_params.get("sort", "")
     direction = request.query_params.get("dir", "asc")
     filters = parse_filters(request.query_params.multi_items())
-    where, params = build_where(filters)
+    where, params = build_where(ds, filters)
 
-    casts = ", ".join(f"CAST({quote(c)} AS VARCHAR) AS {quote(c)}" for c in COLUMN_NAMES)
-    onlist = ", ".join(quote(c) for c in COLUMN_NAMES)
-    rn = f"ROW_NUMBER() OVER ({order_by(sort, direction)}) - 1"
+    casts = ", ".join(f"CAST({quote(ds, c)} AS VARCHAR) AS {quote(ds, c)}" for c in ds.names)
+    onlist = ", ".join(quote(ds, c) for c in ds.names)
+    rn = f"ROW_NUMBER() OVER ({order_by(ds, sort, direction)}) - 1"
     sql = f"""
-        WITH ordered AS (SELECT {rn} AS __rn, {casts} FROM {TABLE}{where})
+        WITH ordered AS (SELECT {rn} AS __rn, {casts} FROM {ds.table}{where})
         SELECT __rn, col FROM (UNPIVOT ordered ON {onlist} INTO NAME col VALUE val)
         WHERE val ILIKE ?
         ORDER BY __rn, col
@@ -218,13 +270,36 @@ def search(request: Request):
 
 
 @app.get("/api/stats")
-def stats():
+def stats(request: Request):
+    ds = dataset(request)
     cur = db()
     rows_, files = cur.execute(
-        f"SELECT count(*), count(DISTINCT filename) FROM {TABLE}"
+        f"SELECT count(*), count(DISTINCT {ds.count_distinct}) FROM {ds.table}"
     ).fetchone()
-    lo, hi = cur.execute(f"SELECT min(race_date), max(race_date) FROM {TABLE}").fetchone()
-    return {"rows": rows_, "files": files, "from": str(lo), "to": str(hi)}
+    lo, hi = cur.execute(
+        f"SELECT min({ds.date_col}), max({ds.date_col}) FROM {ds.table}"
+    ).fetchone()
+    return {"dataset": ds.key, "rows": rows_, "files": files,
+            "unit": "cards" if ds.key == "form" else "files",
+            "from": str(lo), "to": str(hi)}
+
+
+# Without an explicit Cache-Control the browser applies heuristic freshness and
+# will happily reuse a cached app.js for hours without asking. After a change
+# that pairs a new index.html with a new app.js that is not a stale nicety, it
+# is a broken page: the old script runs against the new markup and, in the case
+# that prompted this, silently rendered only the Settings tab. "no-cache" still
+# permits caching -- it just requires revalidation, so the usual answer stays a
+# cheap 304 rather than a full re-download.
+NO_CACHE = "no-cache, must-revalidate"
+
+
+@app.middleware("http")
+async def revalidate_assets(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = NO_CACHE
+    return response
 
 
 @app.get("/")

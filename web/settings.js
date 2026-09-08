@@ -146,9 +146,15 @@ function renderFonts() {
 
 // --------------------------------------------------------------------- tabs
 
+/** Tab names are read from the DOM, because app.js adds one per dataset at
+ *  runtime -- a hardcoded list here would silently drop any new table. */
+function knownTabs() {
+  return [...document.querySelectorAll('.tabs button[data-tab]')].map((b) => b.dataset.tab);
+}
+
 function showTab(name, push) {
-  const known = ['racing', 'settings'];
-  if (!known.includes(name)) name = 'racing';
+  const known = knownTabs();
+  if (!known.includes(name)) name = known[0] || 'settings';
   for (const id of known) {
     const tab = document.getElementById('tab-' + id);
     const panel = document.getElementById('panel-' + id);
@@ -157,18 +163,24 @@ function showTab(name, push) {
     if (panel) panel.hidden = !on;
   }
   if (push && location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
-  document.title = name === 'settings'
-    ? 'NagMeister — settings'
-    : 'NagMeister — race results';
+  const label = document.getElementById('tab-' + name);
+  document.title = label ? `NagMeister — ${label.textContent.trim()}` : 'NagMeister';
+  // a grid only queries its table once it is actually shown
+  if (typeof window.nmOnTabShown === 'function') window.nmOnTabShown(name);
 }
+window.nmShowTab = showTab;
 
 function initTabs() {
-  for (const btn of document.querySelectorAll('.tabs button')) {
-    btn.onclick = () => showTab(btn.dataset.tab, true);
+  // delegated, so tabs added later by app.js work without re-wiring
+  const nav = document.querySelector('.tabs');
+  if (nav) {
+    nav.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-tab]');
+      if (btn) showTab(btn.dataset.tab, true);
+    });
   }
   // deep-linkable, and the back button behaves
   addEventListener('hashchange', () => showTab(location.hash.slice(1), false));
-  showTab(location.hash.slice(1) || 'racing', false);
 }
 
 apply();

@@ -9,7 +9,7 @@ Horse racing data tooling.
 | `rbd_results.py` | Downloads the daily results workbooks from racing-bet-data.com |
 | `rbd_prerace.py` | Downloads the daily pre-race workbook |
 | `rbd_import.py` | Loads those workbooks into a DuckDB table |
-| `rbd_web.py` + `web/` | Web service: Racing History table and Settings |
+| `rbd_web.py` + `web/` | Web service: Racing History, Racing Form and Settings tabs |
 | `web/logo*.svg` | Brand assets (see [Logo](#logo)) |
 | `data/` | Downloaded workbooks and the database (gitignored — reproducible from the scripts) |
 
@@ -157,9 +157,21 @@ FROM race_results GROUP BY trainer ORDER BY runs DESC LIMIT 10;
 
 ## Browsing the data
 
-`rbd_web.py` serves two tabs: **Racing History**, showing every column of
-`race_results` with per-column filtering, sorting and a find-in-table search;
-and **Settings**, which governs look and feel.
+`rbd_web.py` serves three tabs:
+
+| Tab | Shows |
+| --- | --- |
+| **Racing History** | every column of `race_results` |
+| **Racing Form** | every column of `prerace_form` |
+| **Settings** | look and feel |
+
+Both data tabs are the same grid against a different table, so they have
+identical sorting, filtering and find-in-table search, and keep their own
+filters, sort, page and search independently of each other. A grid queries its
+table only when its tab is first opened.
+
+Adding a third table means adding an entry to `DATASETS` in `rbd_web.py` — the
+tab, the panel and the column headers all follow from the API.
 
 ```bash
 ./nag.sh start        # start it, wait until it answers, print the URL
@@ -187,7 +199,7 @@ Or run it in the foreground:
 | Sort | Click any column header; click again to reverse |
 | Filter | Type in the box under a header. Text columns match on substring, or `=exact`. Numeric, date and time columns also take `>5`, `<=2.5`, `1..9` |
 | Search | Type in "Find in table"; Enter or ↓ for the next match, Shift+Enter or ↑ for the previous. Matches wrap at both ends |
-| Reset | Clears every filter, the sort and the search |
+| Reset | Clears every filter, the sort and the search for that tab |
 
 The table is ~150k rows, so filtering, sorting, searching and paging all happen
 in DuckDB rather than the browser. Search returns the ordinal position of every

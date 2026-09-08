@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NagMeister — race results</title>
+<title>NagMeister</title>
 <meta name="description" content="Historic racing form, odds movement and value — one table.">
 
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
@@ -35,60 +35,59 @@
 <body>
 
 <header>
-  <a class="brand" href="#racing" title="NagMeister">
+  <a class="brand" href="#" title="NagMeister">
     <img src="/static/logo-mark.svg" alt="" width="38" height="38">
     <span class="wordmark">Nag<span>Meister</span></span>
   </a>
 
+  <!-- One tab per dataset is inserted here by app.js, before Settings. -->
   <nav class="tabs" role="tablist" aria-label="Sections">
-    <button role="tab" id="tab-racing" aria-controls="panel-racing" aria-selected="true" data-tab="racing">
-      Racing History
-    </button>
-    <button role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false" data-tab="settings">
-      Settings
-    </button>
+    <button type="button" role="tab" id="tab-settings" aria-controls="panel-settings"
+            aria-selected="false" data-tab="settings">Settings</button>
   </nav>
 </header>
 
 <div id="banner" class="banner" hidden></div>
 
-<!-- ──────────────────────────── Racing History ───────────────────────────── -->
-<section id="panel-racing" class="panel" role="tabpanel" aria-labelledby="tab-racing">
+<!-- Data panels are cloned from the template below, one per dataset. -->
+<div id="panels" class="panels"></div>
+
+<template id="gridtpl">
   <div class="toolbar">
-    <div id="stats" class="stats">loading…</div>
+    <div class="g-stats stats">loading…</div>
     <div class="find">
-      <input id="q" type="search" placeholder="Find in table…" autocomplete="off" spellcheck="false">
-      <button id="prev" title="Previous match (Shift+Enter)" disabled>&uarr;</button>
-      <button id="next" title="Next match (Enter)" disabled>&darr;</button>
-      <span id="matchinfo" class="matchinfo"></span>
-      <button id="clear" class="ghost" title="Clear filters and search">Reset</button>
+      <input class="g-q" type="search" placeholder="Find in table…" autocomplete="off" spellcheck="false">
+      <button type="button" class="g-prev" title="Previous match (Shift+Enter)" disabled>&uarr;</button>
+      <button type="button" class="g-next" title="Next match (Enter)" disabled>&darr;</button>
+      <span class="g-matchinfo matchinfo"></span>
+      <button type="button" class="g-clear ghost" title="Clear filters and search">Reset</button>
     </div>
   </div>
 
   <div class="tablewrap">
-    <table id="grid">
+    <table class="grid">
       <thead>
-        <tr id="headrow"></tr>
-        <tr id="filterrow"></tr>
+        <tr class="g-headrow"></tr>
+        <tr class="g-filterrow"></tr>
       </thead>
-      <tbody id="body"></tbody>
+      <tbody class="g-body"></tbody>
     </table>
-    <div id="empty" class="empty" hidden>No rows match these filters.</div>
+    <div class="g-empty empty" hidden>No rows match these filters.</div>
   </div>
 
   <footer>
-    <button id="first">&laquo; First</button>
-    <button id="pprev">&lsaquo; Prev</button>
-    <span id="pageinfo">—</span>
-    <button id="pnext">Next &rsaquo;</button>
-    <button id="last">Last &raquo;</button>
+    <button type="button" class="g-first">&laquo; First</button>
+    <button type="button" class="g-pprev">&lsaquo; Prev</button>
+    <span class="g-pageinfo pageinfo">—</span>
+    <button type="button" class="g-pnext">Next &rsaquo;</button>
+    <button type="button" class="g-last">Last &raquo;</button>
     <label class="pagesize">Rows
-      <select id="limit">
+      <select class="g-limit">
         <option>50</option><option selected>100</option><option>250</option><option>500</option>
       </select>
     </label>
   </footer>
-</section>
+</template>
 
 <!-- ────────────────────────────── Settings ───────────────────────────────── -->
 <section id="panel-settings" class="panel settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
@@ -102,7 +101,7 @@
 
     <section class="card">
       <h2>Table font</h2>
-      <p class="hint">Used for the data in the Racing History table; the rest of the interface is unchanged.</p>
+      <p class="hint">Used for the data in the Racing History and Racing Form tables; the rest of the interface is unchanged.</p>
       <div class="fontrow">
         <select id="fontpick" aria-label="Table font"></select>
         <label class="check">
