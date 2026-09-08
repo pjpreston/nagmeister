@@ -51,7 +51,7 @@ button.ghost { color: var(--muted); }
 }
 
 .tablewrap { flex: 1; overflow: auto; position: relative; }
-#grid, .preview table {
+table.grid, .preview table {
   border-collapse: separate; border-spacing: 0;
   font-family: var(--table-font); font-variant-numeric: var(--table-numeric);
 }
@@ -114,7 +114,7 @@ footer {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 14px; border-top: 1px solid var(--line); background: var(--head);
 }
-#pageinfo { color: var(--muted); font-variant-numeric: tabular-nums; }
+.pageinfo { color: var(--muted); font-variant-numeric: tabular-nums; }
 .pagesize { margin-left: auto; color: var(--muted); }
 .pagesize select {
   font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px;
@@ -134,7 +134,10 @@ footer {
 }
 .tabs button[aria-selected="true"]:hover { color: var(--bg); background: var(--brand-hi); }
 
-/* Each panel owns the space under the header and lays itself out. */
+/* Each panel owns the space under the header and lays itself out. The wrapper
+   the data panels are cloned into has to pass that height through, or the
+   table body collapses and scrolls the whole page instead of the grid. */
+.panels { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel[hidden] { display: none; }
 
