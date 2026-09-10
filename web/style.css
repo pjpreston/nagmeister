@@ -207,3 +207,42 @@ footer {
   background: var(--brand); color: var(--bg); font-weight: 600;
   box-shadow: 0 4px 14px rgba(0,0,0,.18);
 }
+
+/* ───────────────────────── compact grid + race card ─────────────────────── */
+
+/* A compact table shows about ten rows and scrolls, instead of filling the
+   viewport, to leave room for the drill-down beneath it. 10 rows plus the two
+   sticky header rows; the panel still scrolls if the window is very short. */
+.panel.compact { overflow: auto; }
+.panel.compact .tablewrap { flex: none; max-height: calc(10 * 25px + 56px); }
+
+tbody tr.pickable { cursor: pointer; }
+tbody tr.selected > td { background: color-mix(in srgb, var(--brand) 22%, var(--bg)); }
+tbody tr.selected > td:first-child {
+  background-image: linear-gradient(to right, var(--brand) 0 3px, transparent 3px);
+}
+
+.racecard { padding: 14px; border-top: 1px solid var(--line); }
+.racecard-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.rc-view {
+  font-weight: 600; padding: 7px 14px;
+  border-color: var(--brand); color: var(--brand);
+}
+.rc-view:hover:not(:disabled) {
+  background: var(--brand); color: var(--bg); border-color: var(--brand);
+}
+.rc-hint { margin: 0; }
+.rc-out { margin-top: 12px; }
+.rc-title { margin: 0 0 8px; font-size: 14px; }
+.rc-title .hint { display: inline; font-weight: 400; }
+.rc-table {
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  min-width: 520px;
+}
+.rc-table th, .rc-table td {
+  padding: 6px 12px; border-bottom: 1px solid var(--line); text-align: left;
+  white-space: nowrap;
+}
+.rc-table th { background: var(--head); font-weight: 600; }
+.rc-table tr:last-child td { border-bottom: 0; }
+.rc-table td.num { text-align: right; }
