@@ -113,10 +113,13 @@ PRERACE_TYPE = {db: typ for _, _, db, typ in PRERACE_COLUMNS}
 
 RACECARD_FIELDS = [
     ("horse", "Horse"),
+    ("stall", "Stall"),
     ("age", "Age"),
     ("pace", "Pace"),
     ("weight", "Weight"),
     ("jockey", "Jockey"),
+    ("trainer", "Trainer"),
+    ("sp_fav", "SP Fav"),
     ("industry_sp", "Industry SP"),
 ]
 

@@ -210,8 +210,9 @@ the viewport) and a `detail` drill-down.
 ### The Races tab
 
 Shows the `races` table about ten rows at a time. Selecting a race and pressing
-**View race card** lists that race's runners beneath the table — horse, age,
-pace, weight, jockey and industry SP — in market order, so the favourite leads.
+**View race card** lists that race's runners beneath the table — horse, stall,
+age, pace, weight, jockey, trainer, SP favouritism and industry SP — in market
+order, so the favourite leads.
 
 The runners come from `/api/racecard?date=&track=&time=`, which matches
 `prerace_form` on `(race_date, track, race_time)` — the key of the `races`
