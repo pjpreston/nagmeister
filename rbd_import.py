@@ -202,6 +202,26 @@ PRERACE_COLUMNS = [
 ]
 N_PRERACE_COLS = len(PRERACE_COLUMNS)
 
+# ------------------------------------------------------------------ races ---
+#
+# The race card: one row per race taking place on a given day.
+#
+# Derived from prerace_form rather than declared with its own literals, so the
+# types cannot drift from the table it is built out of. The db column names are
+# prerace_form's, which is what makes a join read naturally:
+#
+#   races r JOIN prerace_form f
+#     ON f.race_date = r.race_date AND f.track = r.track AND f.race_time = r.race_time
+#
+# Only races on the card date go in. A card's rows also carry every declared
+# horse's form history, some 4,900 historic races per file, and those are not
+# races taking place that day.
+RACES_TABLE = "races"
+RACES_KEY = ["race_date", "track", "race_time"]
+RACES_COLUMNS = ["race_date", "track", "race_time", "race_type", "distance"]
+
+_PRERACE_TYPE = {db: typ for _, _, db, typ in PRERACE_COLUMNS}
+
 # Excel's day zero. 1899-12-30 rather than 12-31 absorbs the 1900 leap-year bug.
 EXCEL_EPOCH = "DATE '1899-12-30'"
 
@@ -218,6 +238,13 @@ def ddl():
         # re-run deletes on.
         f"    {'prerace_date':<22} DATE NOT NULL,\n"
         f"    {'filename':<22} VARCHAR NOT NULL\n);\n\n"
+        f"CREATE TABLE IF NOT EXISTS {RACES_TABLE} (\n"
+        + ",\n".join(f"    {c:<22} {_PRERACE_TYPE[c]}" for c in RACES_COLUMNS)
+        # (date, track, time) identifies a race; verified unique across the
+        # loaded cards. Declaring it means a genuine collision fails the load
+        # loudly and rolls back, rather than quietly storing two races at the
+        # same track and time.
+        + f",\n    PRIMARY KEY ({', '.join(RACES_KEY)})\n);\n\n"
         f"CREATE TABLE IF NOT EXISTS {LEDGER} (\n"
         f"    filename    VARCHAR PRIMARY KEY,\n"
         f"    source_path VARCHAR,\n"
@@ -367,11 +394,39 @@ def load_prerace(con, path, day):
         n = con.execute(
             f"SELECT count(*) FROM {PRERACE_TABLE} WHERE prerace_date = ?", [day]
         ).fetchone()[0]
+        races = refresh_races(con, day)
         con.execute("COMMIT")
     except Exception:
         con.execute("ROLLBACK")
         raise
-    return n, removed
+    return n, removed, races
+
+
+def refresh_races(con, day):
+    """Rebuild the race card for one day from the rows just loaded.
+
+    Called inside load_prerace's transaction, so the card cannot end up
+    describing a different day's data than prerace_form holds -- either both
+    land or neither does.
+
+    Restricted to race_date = prerace_date. The rest of a card's rows are the
+    declared horses' form history, roughly 4,900 historic races per file, which
+    are not races taking place that day.
+
+    Re-runnable the same way as the load it belongs to: the day's races are
+    deleted first, so a second run replaces rather than duplicates.
+    """
+    cols = ", ".join(RACES_COLUMNS)
+    con.execute(f"DELETE FROM {RACES_TABLE} WHERE race_date = ?", [day])
+    con.execute(
+        f"INSERT INTO {RACES_TABLE} ({cols})"
+        f" SELECT DISTINCT {cols} FROM {PRERACE_TABLE}"
+        f" WHERE prerace_date = ? AND race_date = prerace_date",
+        [day],
+    )
+    return con.execute(
+        f"SELECT count(*) FROM {RACES_TABLE} WHERE race_date = ?", [day]
+    ).fetchone()[0]
 
 
 def find_files(data_dir):
@@ -425,6 +480,10 @@ def show_prerace_status(con):
         f" GROUP BY 1 ORDER BY 1 DESC LIMIT 5"
     ).fetchall():
         print(f"  {day}  {n:>7,} rows  {horses:>4} horses declared")
+    rdays, rraces = con.execute(
+        f"SELECT count(DISTINCT race_date), count(*) FROM {RACES_TABLE}"
+    ).fetchone()
+    print(f"\n{rdays} race card(s), {rraces:,} races in {RACES_TABLE}")
 
 
 def main(argv=None):
@@ -458,9 +517,10 @@ def main(argv=None):
         path = Path(args.file) if args.file else find_prerace_file(args.prerace_dir, day)
         if not path.exists():
             raise SystemExit(f"no such file: {path}")
-        n, removed = load_prerace(con, path, day)
+        n, removed, races = load_prerace(con, path, day)
         note = f" (replaced {removed:,})" if removed else ""
         print(f"{path.name}: {n:,} rows for {day:%d/%m/%Y}{note} in {PRERACE_TABLE}")
+        print(f"{' ' * len(path.name)}  {races:,} races on the card in {RACES_TABLE}")
         return 0
 
     if args.file:
