@@ -134,6 +134,17 @@
   </footer>
 </template>
 
+<!-- Appended to any dataset that declares a drill-down (currently Races). -->
+<template id="racecardtpl">
+  <div class="racecard">
+    <div class="racecard-bar">
+      <button type="button" class="rc-view" disabled>View race card</button>
+      <span class="rc-hint hint">Select a race above.</span>
+    </div>
+    <div class="rc-out"></div>
+  </div>
+</template>
+
 
 
 <div id="savedmsg" class="savedmsg" hidden>Saved</div>

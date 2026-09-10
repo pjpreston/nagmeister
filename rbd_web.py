@@ -31,7 +31,14 @@ from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from rbd_import import COLUMNS, PRERACE_COLUMNS, PRERACE_TABLE, TABLE  # noqa: E402
+from rbd_import import (  # noqa: E402
+    COLUMNS,
+    PRERACE_COLUMNS,
+    PRERACE_TABLE,
+    RACES_COLUMNS,
+    RACES_TABLE,
+    TABLE,
+)
 
 DEFAULT_DB = Path("data/nagmeister.duckdb")
 WEB_DIR = Path(__file__).parent / "web"
@@ -50,10 +57,15 @@ class Dataset:
     are what the user recognises; filename and prerace_date are ours.
     """
 
-    def __init__(self, key, table, label, columns, extra, order, count_distinct, date_col):
+    def __init__(self, key, table, label, columns, extra, order, count_distinct, date_col,
+                 unit="files", compact=False, detail=None):
         self.key = key
         self.table = table
         self.label = label
+        # compact: show ~10 rows and scroll, rather than filling the viewport
+        self.compact = compact
+        # detail: the drill-down this table supports, if any
+        self.detail = detail
         self.meta = [(db, header, typ) for _, header, db, typ in columns] + extra
         self.names = [m[0] for m in self.meta]
         self.types = {m[0]: m[2] for m in self.meta}
@@ -61,6 +73,8 @@ class Dataset:
         self.order = order
         self.count_distinct = count_distinct
         self.date_col = date_col
+        # what count_distinct counts, for the stats line
+        self.unit = unit
 
 
 DATASETS = {
@@ -75,8 +89,39 @@ DATASETS = {
         # grouped by the card it belongs to, then by today's race, then the
         # horse, so a form table reads in the order you would study it
         ["prerace_date", "todays_race", "horse", "race_date"], "prerace_date", "race_date",
+        unit="cards",
+    ),
+    # The race card. Its columns are the subset of prerace_form that
+    # rbd_import derives races from, so the labels and types come from there
+    # rather than being restated.
+    "races": Dataset(
+        "races", RACES_TABLE, "Races",
+        # ordered by RACES_COLUMNS, not prerace_form's order: a card reads
+        # Date, Track, Time, Type, Distance, and inheriting the source order
+        # would put Time last
+        sorted((c for c in PRERACE_COLUMNS if c[2] in RACES_COLUMNS),
+               key=lambda c: RACES_COLUMNS.index(c[2])), [],
+        ["race_date", "race_time", "track"], "race_date", "race_date",
+        unit="cards", compact=True, detail="racecard",
     ),
 }
+
+# The six fields a race card shows, as (db column, label). Deliberately a short
+# list rather than the whole of prerace_form: this is the shape of a printed
+# race card, not another browsable table.
+PRERACE_TYPE = {db: typ for _, _, db, typ in PRERACE_COLUMNS}
+
+RACECARD_FIELDS = [
+    ("horse", "Horse"),
+    ("stall", "Stall"),
+    ("age", "Age"),
+    ("pace", "Pace"),
+    ("weight", "Weight"),
+    ("jockey", "Jockey"),
+    ("trainer", "Trainer"),
+    ("sp_fav", "SP Fav"),
+    ("industry_sp", "Industry SP"),
+]
 
 
 def dataset(request):
@@ -191,7 +236,10 @@ def parse_filters(request_params):
 @app.get("/api/datasets")
 def api_datasets():
     """The tables the UI can show, in tab order."""
-    return {"datasets": [{"key": d.key, "label": d.label} for d in DATASETS.values()]}
+    return {"datasets": [
+        {"key": d.key, "label": d.label, "compact": d.compact, "detail": d.detail}
+        for d in DATASETS.values()
+    ]}
 
 
 @app.get("/api/columns")
@@ -269,6 +317,39 @@ def search(request: Request):
     }
 
 
+@app.get("/api/racecard")
+def racecard(request: Request):
+    """The runners in one race, for the Races tab's drill-down.
+
+    A race is identified by (race_date, track, race_time) -- the key of the
+    races table. Matching prerace_form on those three gives the horses that ran
+    in that race; for a race on the card date those are the declared runners.
+    """
+    day = (request.query_params.get("date") or "").strip()
+    track = (request.query_params.get("track") or "").strip()
+    time_ = (request.query_params.get("time") or "").strip()
+    if not (day and track and time_):
+        raise HTTPException(400, "date, track and time are all required")
+
+    cols = ", ".join(f'"{c}"' for c, _ in RACECARD_FIELDS)
+    cur = db()
+    rows = cur.execute(
+        f"SELECT DISTINCT {cols} FROM {PRERACE_TABLE}"
+        f" WHERE race_date = TRY_CAST(? AS DATE)"
+        f"   AND track = ?"
+        f"   AND race_time = TRY_CAST(? AS TIME)"
+        # by market rank, so the favourite leads as a card would print it
+        f" ORDER BY industry_sp NULLS LAST, horse",
+        [day, track, time_],
+    ).fetchall()
+    return {
+        "race": {"date": day, "track": track, "time": time_},
+        "columns": [{"name": c, "label": l, "type": PRERACE_TYPE.get(c, "VARCHAR")}
+                    for c, l in RACECARD_FIELDS],
+        "rows": [[None if v is None else str(v) for v in r] for r in rows],
+    }
+
+
 @app.get("/api/stats")
 def stats(request: Request):
     ds = dataset(request)
@@ -279,8 +360,7 @@ def stats(request: Request):
     lo, hi = cur.execute(
         f"SELECT min({ds.date_col}), max({ds.date_col}) FROM {ds.table}"
     ).fetchone()
-    return {"dataset": ds.key, "rows": rows_, "files": files,
-            "unit": "cards" if ds.key == "form" else "files",
+    return {"dataset": ds.key, "rows": rows_, "files": files, "unit": ds.unit,
             "from": str(lo), "to": str(hi)}
 
 

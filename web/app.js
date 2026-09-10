@@ -30,8 +30,10 @@ function debounce(fn, ms) {
   return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
 
-function createGrid(root, key) {
+function createGrid(root, ds) {
+  const key = ds.key;
   const state = {
+    selected: null,      // the race the drill-down is pinned to, if any
     columns: [],
     offset: 0,
     limit: 100,
@@ -147,6 +149,13 @@ function createGrid(root, key) {
       const ordinal = state.offset + r;
       const tr = document.createElement('tr');
       tr.dataset.rn = ordinal;
+      if (ds.detail) {
+        // a row is a race; clicking it pins the drill-down to that race
+        const pick = raceKeyOf(row);
+        tr.classList.add('pickable');
+        if (state.selected && sameRace(pick, state.selected)) tr.classList.add('selected');
+        tr.onclick = () => selectRace(pick);
+      }
       row.forEach((val, c) => {
         const col = state.columns[c];
         const td = document.createElement('td');
@@ -263,7 +272,14 @@ function createGrid(root, key) {
   el('g-clear').onclick = () => {
     state.filters = {}; state.query = ''; state.matches = []; state.matchIndex = -1;
     state.sort = ''; state.dir = 'asc'; state.offset = 0;
+    state.selected = null;
     el('g-q').value = '';
+    const out = root.querySelector('.rc-out');
+    const btn = root.querySelector('.rc-view');
+    const hint = root.querySelector('.rc-hint');
+    if (out) out.innerHTML = '';
+    if (btn) btn.disabled = true;
+    if (hint) hint.textContent = 'Select a race above.';
     reload();
   };
 
@@ -275,6 +291,60 @@ function createGrid(root, key) {
     reload();
   };
   el('g-limit').onchange = (e) => { state.limit = +e.target.value; state.offset = 0; reload(); };
+
+  /** Pull (date, track, time) out of a rendered row by column name. */
+  function raceKeyOf(row) {
+    const at = (name) => row[state.columns.findIndex((c) => c.name === name)];
+    return { date: at('race_date'), track: at('track'), time: at('race_time') };
+  }
+
+  const sameRace = (a, b) => a && b && a.date === b.date && a.track === b.track && a.time === b.time;
+
+  function selectRace(pick) {
+    state.selected = pick;
+    for (const tr of root.querySelectorAll('.g-body tr')) {
+      const row = [...tr.children].map((td) => (td.classList.contains('null') ? null : td.textContent));
+      tr.classList.toggle('selected', sameRace(raceKeyOf(row), pick));
+    }
+    const btn = root.querySelector('.rc-view');
+    const hint = root.querySelector('.rc-hint');
+    if (btn) btn.disabled = false;
+    if (hint) hint.textContent = `${pick.track} ${pick.time} — ${pick.date}`;
+  }
+
+  async function showRaceCard() {
+    const out = root.querySelector('.rc-out');
+    const pick = state.selected;
+    if (!out || !pick) return;
+    out.innerHTML = '<p class="hint">Loading…</p>';
+    try {
+      const q = new URLSearchParams({ date: pick.date, track: pick.track, time: pick.time });
+      const data = await getJSON('/api/racecard?' + q);
+      if (!data.rows.length) {
+        out.innerHTML = '<p class="hint">No runners recorded for this race.</p>';
+        return;
+      }
+      const head = data.columns.map((c) => `<th>${c.label}</th>`).join('');
+      const body = data.rows.map((r) => '<tr>' + r.map((v, i) => {
+        const num = NUMERIC.has(data.columns[i].type);
+        return v === null
+          ? '<td class="null">—</td>'
+          : `<td${num ? ' class="num"' : ''}>${v}</td>`;
+      }).join('') + '</tr>').join('');
+      out.innerHTML =
+        `<h3 class="rc-title">${pick.track} ${pick.time} · ${pick.date}` +
+        ` <span class="hint">${data.rows.length} runners</span></h3>` +
+        `<table class="rc-table grid"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    } catch (e) {
+      out.innerHTML = '';
+      banner(e.message);
+    }
+  }
+
+  if (ds.detail === 'racecard') {
+    const btn = root.querySelector('.rc-view');
+    if (btn) btn.onclick = showRaceCard;
+  }
 
   return {
     key,
@@ -289,8 +359,9 @@ function createGrid(root, key) {
           getJSON('/api/stats?dataset=' + key),
         ]);
         state.columns = cols.columns;
+        const unit = st.files === 1 ? st.unit.replace(/s$/, '') : st.unit;
         el('g-stats').textContent =
-          `${st.rows.toLocaleString()} rows · ${st.files.toLocaleString()} ${st.unit} · ${st.from} → ${st.to}`;
+          `${st.rows.toLocaleString()} rows · ${st.files.toLocaleString()} ${unit} · ${st.from} → ${st.to}`;
         buildHead();
         await reload();
       } catch (e) {
@@ -332,9 +403,14 @@ const grids = new Map();
       panel.setAttribute('aria-labelledby', btn.id);
       panel.hidden = true;
       panel.appendChild(tpl.content.cloneNode(true));
+      if (ds.compact) panel.classList.add('compact');
+      if (ds.detail) {
+        const dtpl = document.getElementById(ds.detail + 'tpl');
+        if (dtpl) panel.appendChild(dtpl.content.cloneNode(true));
+      }
       panels.insertBefore(panel, settingsPanel);   // Settings stays last
 
-      grids.set(ds.key, createGrid(panel, ds.key));
+      grids.set(ds.key, createGrid(panel, ds));
     }
 
     // settings.js owns tab switching; tell it what exists and which to open

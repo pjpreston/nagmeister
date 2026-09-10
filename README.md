@@ -9,7 +9,7 @@ Horse racing data tooling.
 | `rbd_results.py` | Downloads the daily results workbooks from racing-bet-data.com |
 | `rbd_prerace.py` | Downloads the daily pre-race workbook |
 | `rbd_import.py` | Loads those workbooks into a DuckDB table |
-| `rbd_web.py` + `web/` | Web service: Racing History, Racing Form and Settings tabs |
+| `rbd_web.py` + `web/` | Web service: Racing History, Racing Form, Races and Settings tabs |
 | `web/logo*.svg` | Brand assets (see [Logo](#logo)) |
 | `data/` | Downloaded workbooks and the database (gitignored — reproducible from the scripts) |
 
@@ -194,6 +194,7 @@ FROM race_results GROUP BY trainer ORDER BY runs DESC LIMIT 10;
 | --- | --- |
 | **Racing History** | every column of `race_results` |
 | **Racing Form** | every column of `prerace_form` |
+| **Races** | the `races` card, with a race-card drill-down |
 | **Settings** | look and feel |
 
 Both data tabs are the same grid against a different table, so they have
@@ -201,8 +202,21 @@ identical sorting, filtering and find-in-table search, and keep their own
 filters, sort, page and search independently of each other. A grid queries its
 table only when its tab is first opened.
 
-Adding a third table means adding an entry to `DATASETS` in `rbd_web.py` — the
-tab, the panel and the column headers all follow from the API.
+Adding another table means adding an entry to `DATASETS` in `rbd_web.py` — the
+tab, the panel and the column headers all follow from the API. A dataset can
+also ask for `compact=True` (show about ten rows and scroll, rather than filling
+the viewport) and a `detail` drill-down.
+
+### The Races tab
+
+Shows the `races` table about ten rows at a time. Selecting a race and pressing
+**View race card** lists that race's runners beneath the table — horse, stall,
+age, pace, weight, jockey, trainer, SP favouritism and industry SP — in market
+order, so the favourite leads.
+
+The runners come from `/api/racecard?date=&track=&time=`, which matches
+`prerace_form` on `(race_date, track, race_time)` — the key of the `races`
+table. For a race on the card date those rows are the declared runners.
 
 ```bash
 ./nag.sh start        # start it, wait until it answers, print the URL
