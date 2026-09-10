@@ -148,6 +148,37 @@ alongside finishing positions; `race_rating` holds bands like `0-95`;
 `up_in_trip` is `YES`/`NO`; and `-` and `NA` appear as missing markers in the
 percentage columns.
 
+### The race card
+
+Loading a pre-race file also rebuilds `races`, the card for that day: one row
+per race actually taking place, with `race_date`, `track`, `race_time`,
+`race_type` and `distance`. Around 37 races a day.
+
+```sql
+-- today's card with field sizes
+SELECT r.track, r.race_time, r.race_type, r.distance,
+       count(DISTINCT f.horse) AS runners
+FROM races r
+JOIN prerace_form f
+  ON f.race_date = r.race_date AND f.track = r.track AND f.race_time = r.race_time
+WHERE r.race_date = current_date
+GROUP BY 1, 2, 3, 4 ORDER BY r.race_time;
+```
+
+Only races on the card date go in. A file's other rows are the declared horses'
+form history — roughly 4,900 historic races per file — which are not races
+taking place that day.
+
+`(race_date, track, race_time)` is the primary key: it identifies a race, and
+was verified unique across the loaded cards. The column types are derived from
+`prerace_form` rather than restated, so they cannot drift from the table the
+card is built out of.
+
+The rebuild happens inside the same transaction as the pre-race load, so the
+card can never describe a different day's data than `prerace_form` holds —
+either both land or neither does — and re-running replaces the day rather than
+duplicating it.
+
 ```sql
 -- e.g. strike rate by trainer
 SELECT trainer, count(*) AS runs,
