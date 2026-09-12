@@ -8,6 +8,9 @@ https://www.racing-bet-data.com/today/.
     python rbd_prerace.py                 # today's pre-race file
     python rbd_prerace.py sample          # public sample, no login
     python rbd_prerace.py --skip-existing # for a cron job: no-op if already have it
+    python rbd_prerace.py months          # list the archived months
+    python rbd_prerace.py backfill --from 01/09/2025
+    python rbd_prerace.py archive 25I_Sep-25
 
 Files land alongside the results in the same shape, under pre-race:
 
@@ -18,6 +21,11 @@ Sign-in, throttling and the spreadsheet check are imported from rbd_results
 rather than reimplemented, so both tools authenticate identically and are
 paced by the same limiter. Credentials come from RBD_USER / RBD_PASS and an
 Advanced membership is required, as for the results file.
+
+The month archive is imported for the same reason. /today/ and /results/ are
+two pages of one WebForms app and render the same sidebar controls over the
+same month values, so the backfill here is rbd_results' own, pointed at this
+page and this output directory -- see rbd_results.Archive.
 """
 
 import argparse
@@ -36,9 +44,15 @@ from bs4 import BeautifulSoup  # noqa: E402
 from rbd_results import (  # noqa: E402
     DEFAULT_DELAY,
     XLSX_MIME,
+    Archive,
     DownloadError,
+    backfill,
+    download_archive,
+    file_day,
     filename_from,
     hidden_fields,
+    list_months,
+    parse_date,
     postback,
     safe_name,
     save,
@@ -129,7 +143,9 @@ def fetch(session, soup, kind, target, label):
         form = hidden_fields(soup)
         form[target] = label or "Download"
         return session.post(TODAY_URL, data=form, headers={"Referer": TODAY_URL})
-    return postback(session, soup, target)
+    # postback defaults to the results page; soup came from /today/, and a
+    # __VIEWSTATE is only valid for the page that issued it
+    return postback(session, soup, target, url=TODAY_URL)
 
 
 def download_today(session, skip_existing=False):
@@ -160,29 +176,37 @@ def download_today(session, skip_existing=False):
             return existing
 
     r = fetch(session, soup, kind, target, label)
-    dest = month_dir(day) / target_name(day, filename_from(r, None))
+    dest = month_dir(day) / prerace_name(filename_from(r, None), day)
     if skip_existing and dest.exists():
         print(f"{dest}  (have it)")
         return dest
     return save(r, dest)
 
 
-def target_name(day, server_name):
-    """What to call the file on disk.
+def prerace_name(server_name, day=None):
+    """What to call a pre-race workbook on disk: "Daily - 30092025.xlsx".
 
-    The server sends `Content-Disposition: filename=Daily.xlsx` every single
-    day, with no date in it. Saved under that name each run would overwrite
-    the previous day and leave a folder of files you cannot tell apart, so the
-    file date is stamped on to match how the results tool names its downloads
-    ("Results - 06092026.xlsx"). A server name that already carries a date is
-    respected, in case that ever changes.
+    The single place both `today` and the archive backfill get their filenames
+    from, so the two can never file the same race day under two different names.
+
+    Neither source offers a usable name. The today endpoint sends
+    `Content-Disposition: filename=Daily.xlsx` every single day with no date in
+    it, so saving under that would overwrite yesterday's file and leave a folder
+    you cannot tell apart. The month archive lists the same workbooks as
+    `Daily30092025.xlsx`, which does carry the date but in a different shape --
+    and a backfill that saved those would refetch every day `today` had already
+    filed under the spaced name. So the day is always stamped on in the one
+    shape, matching how the results tool names its downloads
+    ("Results - 06092026.xlsx").
     """
     ext = Path(server_name).suffix if server_name else ".xlsx"
-    if server_name and re.search(r"\d{6,8}", server_name):
-        return safe_name(server_name)
+    day = day or file_day(server_name or "")
     if day:
-        return f"Daily - {day.strftime('%d%m%Y')}{ext}"
+        return f"Daily - {day:%d%m%Y}{ext}"
     return safe_name(server_name or "Daily.xlsx")
+
+
+PRERACE_ARCHIVE = Archive(TODAY_URL, OUTDIR, prerace_name)
 
 
 def month_dir(day):
@@ -194,7 +218,7 @@ def month_dir(day):
 
 def expected_path(day):
     """Where today's file lands, without having to make the request first."""
-    return month_dir(day) / target_name(day, None)
+    return month_dir(day) / prerace_name(None, day)
 
 
 def save_debug(text):
@@ -212,21 +236,50 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("command", nargs="?", default="today", choices=["today", "sample"],
+    ap.add_argument("command", nargs="?", default="today",
+                    choices=["today", "sample", "months", "backfill", "archive"],
                     help="default: today")
+    ap.add_argument("values", nargs="*",
+                    help="month values for `archive` (see `months`)")
     ap.add_argument("--delay", type=float, default=None,
                     help=f"seconds between requests (default {DEFAULT_DELAY}, or $RBD_DELAY)")
     ap.add_argument("--skip-existing", action="store_true",
                     help="do nothing if today's file is already on disk")
+    ap.add_argument("--from", dest="since", metavar="DATE",
+                    help="backfill from this race day towards today"
+                         " (DD/MM/YYYY or YYYY-MM-DD)")
+    ap.add_argument("--force", action="store_true",
+                    help="re-download files already on disk")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="list what would be fetched, in order, and download nothing")
     args = ap.parse_args(argv)
 
     import os
 
     delay = args.delay if args.delay is not None else float(os.getenv("RBD_DELAY", DEFAULT_DELAY))
 
+    since = parse_date(args.since) if args.since else None
+    if since and since > datetime.now().date():
+        raise SystemExit(f"--from {since:%d/%m/%Y} is in the future -- nothing to fill")
+
+    arc = PRERACE_ARCHIVE
     try:
         if args.command == "sample":
             download_sample(session_from_env(delay, anonymous=True))
+        elif args.command == "months":
+            # the dropdown renders logged out; only the files behind it need auth
+            for value, label in list_months(session_from_env(delay, anonymous=True), arc):
+                print(f"{value:<16} {label}")
+        elif args.command == "backfill":
+            return backfill(session_from_env(delay), arc, force=args.force,
+                            since=since, dry_run=args.dry_run)
+        elif args.command == "archive":
+            if not args.values:
+                raise SystemExit("usage: archive <month-value> [...]  (see `months`)")
+            session = session_from_env(delay)
+            for value in args.values:
+                download_archive(session, arc, value, force=args.force,
+                                 since=since, dry_run=args.dry_run)
         else:
             download_today(session_from_env(delay), skip_existing=args.skip_existing)
     except DownloadError as e:
