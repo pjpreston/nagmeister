@@ -39,6 +39,7 @@ from rbd_import import (  # noqa: E402
     RACES_COLUMNS,
     RACES_TABLE,
     TABLE,
+    lengths_sql,
 )
 
 DEFAULT_DB = Path("data/nagmeister.duckdb")
@@ -135,7 +136,7 @@ RACECARD_FIELDS = [
 # goes over 2m hurdles. Only runs *before* the selected race count.
 #
 # (alias, label, type, aggregate over the horse's qualifying past runs)
-RACECARD_STATS = [
+_PLACE_FORM = [
     ("n_races", "#Races", "INTEGER", "count(*)"),
     ("n_wins", "#Wins", "INTEGER", "count(*) FILTER (WHERE place = '1')"),
     # most recent finishing position. Kept as text because it can be 'PU', and
@@ -148,6 +149,40 @@ RACECARD_STATS = [
     ("avg_plc", "Avg Plc", "DOUBLE", "round(avg(TRY_CAST(place AS DOUBLE)), 2)"),
     ("med_plc", "Med Plc", "DOUBLE", "round(median(TRY_CAST(place AS DOUBLE)), 2)"),
 ]
+
+# SCRUM-23 asks for those same five again under its own names, to sit alongside
+# the set above rather than replace it. They are generated from the definitions
+# above rather than written out a second time: the two sets are the same numbers
+# by construction, and two hand-maintained copies would eventually disagree.
+_ALSO_AS = {
+    "n_races": "#Races2",
+    "n_wins": "#Wins2",
+    "last_plc": "LastPlc2",
+    "avg_plc": "AvgPlc2",
+    "med_plc": "MedPlc2",
+}
+
+# What £1 to win on this horse, every time it ran one of these races, would have
+# come back. industry_sp is already decimal and stake-inclusive, so a winner at
+# 6.0 returns 6 and everything else returns nothing. Summed, not averaged: the
+# question is what the whole sequence of bets paid.
+_ONE_PND_WIN = "round(sum(CASE WHEN place = '1' THEN industry_sp ELSE 0 END), 2)"
+
+# Spread of how far the horse finished behind the winner, over the same races.
+# win_dist_len is computed per row in the form CTE; see the query.
+_WIN_DIST_SPREAD = [
+    ("max_win_dist_len", "MaxWinDistLen", "DOUBLE", "round(max(win_dist_len), 2)"),
+    ("min_win_dist_len", "MinWinDistLen", "DOUBLE", "round(min(win_dist_len), 2)"),
+    ("avg_win_dist_len", "AvgWinDistLen", "DOUBLE", "round(avg(win_dist_len), 2)"),
+    ("med_win_dist_len", "MedWinDistLen", "DOUBLE", "round(median(win_dist_len), 2)"),
+]
+
+RACECARD_STATS = (
+    _PLACE_FORM
+    + [("one_pnd_win2", "£1 win2", "DOUBLE", _ONE_PND_WIN)]
+    + [(f"{a}2", _ALSO_AS[a], t, sql) for a, _, t, sql in _PLACE_FORM]
+    + _WIN_DIST_SPREAD
+)
 
 
 def dataset(request):
@@ -386,9 +421,20 @@ def racecard(request: Request):
         ),
         -- one row per past race, not per row held: a horse declared on several
         -- of the loaded cards carries its whole history in each of them, so
-        -- counting rows would count those runs once per card.
+        -- counting rows would count those runs once per card. DISTINCT ON keys
+        -- on the race alone, so this stays one row per race even if two cards
+        -- ever disagree about a detail of it -- they do not today, but a plain
+        -- DISTINCT over the payload would silently start double-counting.
         form AS (
-            SELECT DISTINCT f.horse, f.race_date, f.race_time, f.track, f.place
+            SELECT DISTINCT ON (f.horse, f.race_date, f.track, f.race_time)
+                   f.horse, f.race_date, f.race_time, f.track, f.place,
+                   f.industry_sp,
+                   -- how far behind the winner, in lengths. The winner is none,
+                   -- so its empty Winning Distance reads as 0 rather than
+                   -- unknown; a non-finisher has no meaningful distance and
+                   -- stays NULL, which the min/max/avg/median then skip.
+                   CASE WHEN f.place = '1' THEN 0.0
+                        ELSE {lengths_sql("f.winning_distance")} END AS win_dist_len
             FROM {PRERACE_TABLE} f, race
             WHERE f.horse IN (SELECT horse FROM runners)
               AND f.race_type = race.race_type
@@ -399,6 +445,9 @@ def racecard(request: Request):
               -- an earlier one, where later cards have since added runs that
               -- are still in the future as far as this race is concerned.
               AND f.race_date < TRY_CAST(? AS DATE)
+            -- DISTINCT ON takes the first row per key, so name one: the
+            -- earliest card that carried this run
+            ORDER BY f.horse, f.race_date, f.track, f.race_time, f.prerace_date
         ),
         stats AS (
             SELECT horse,
