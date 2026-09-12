@@ -33,6 +33,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from rbd_import import (  # noqa: E402
     COLUMNS,
+    DERIVED_COLUMNS,
     PRERACE_COLUMNS,
     PRERACE_TABLE,
     RACES_COLUMNS,
@@ -80,7 +81,11 @@ class Dataset:
 DATASETS = {
     "results": Dataset(
         "results", TABLE, "Racing History", COLUMNS,
-        [("filename", "Source File", "VARCHAR")],
+        # the derived columns are not in COLUMNS -- that is the map onto the
+        # workbook's own columns -- so they come in here, where they sort and
+        # filter like any other numeric column
+        [(db, label, typ) for db, label, typ, _ in DERIVED_COLUMNS]
+        + [("filename", "Source File", "VARCHAR")],
         ["race_date", "race_time", "filename"], "filename", "race_date",
     ),
     "form": Dataset(
