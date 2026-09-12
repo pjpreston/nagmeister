@@ -324,16 +324,36 @@ distance**, so the card reads as form rather than a list of names:
 
 | Column | Meaning |
 | --- | --- |
+| `£1 invest` | what £1 to win on every one of those races would have returned |
 | `#Races` | qualifying races the horse has run before this one |
 | `#Wins` | how many of those it won (`Place` = 1) |
 | `Last Plc` | finishing position in the most recent one |
 | `Avg Plc` | mean finishing position |
 | `Med Plc` | median finishing position |
+| `MaxWinDistLen` | furthest it finished behind the winner, in lengths |
+| `MinWinDistLen` | closest it finished — `0` if it ever won one |
+| `AvgWinDistLen` | mean lengths behind |
+| `MedWinDistLen` | median lengths behind |
 
 Same race type *and* distance is what makes these worth reading — a horse's
 record over 5f handicaps says little about how it goes over 2m hurdles. About
 half the runners on a card have no qualifying history at all and show `—`;
 maidens and first-season two-year-olds mostly have none by definition.
+
+`£1 invest` is a running total, not an average: it answers "what would backing
+this horse in all of these races have paid". `industry_sp` is already decimal
+and stake-inclusive, so a winner at `6.0` contributes £6 and everything else
+contributes nothing. A horse that has never won one of these shows `0.0` — so
+comparing it against `#Races`, the notional stake, says whether the horse has
+been worth backing at this type and distance.
+
+The `WinDistLen` group reads `Winning Distance`, which in `prerace_form` is how
+far **that horse** finished behind the winner — not the winner's margin. It uses
+the same parser as `race_results.win_dist_len` (`lengths_sql` in
+`rbd_import.py`), because the grammar is identical: quarter-fractions and the
+same seven named margins, just without the `[cumulative]` part. A winner's blank
+value reads as `0` lengths, which is why `MinWinDistLen` is `0` for any horse
+with a win and non-zero for one without — a useful sanity check on the row.
 
 Three things the SQL is careful about, all in `RACECARD_STATS` and the
 `/api/racecard` query:

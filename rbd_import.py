@@ -160,12 +160,17 @@ def _whole(expr):
     return f"COALESCE(TRY_CAST(NULLIF(regexp_extract({expr}, '^([0-9]*)', 1), '') AS DOUBLE), 0)"
 
 
-def _lengths(expr):
+def lengths_sql(expr):
     """A beaten margin as decimal lengths: '1¼' -> 1.25, 'nk' -> 0.25.
 
     NULL for anything that is neither. Note a plain decimal like '14.5' is
     rejected too: that only shows up in the shifted-column files, where WinDist
     is holding a price, and NULL beats a plausible-looking wrong margin.
+
+    Public because prerace_form's "Winning Distance" is the same grammar --
+    same quarter-fractions, same seven named margins, just without the
+    "[cumulative]" part race_results carries -- so rbd_web reads it with this
+    rather than a second parser that could disagree with this one.
     """
     numeric = (
         f"CASE WHEN regexp_matches({expr}, '^[0-9]*[{_FRAC_CLASS}]?$') AND {expr} <> ''"
@@ -202,8 +207,8 @@ _BRACKET = "regexp_extract(win_dist, '\\[([^]]*)\\]', 1)"
 WIN_DIST_LEN_SQL = (
     "CASE WHEN win_dist IS NULL THEN 0.0"
     " WHEN regexp_matches(win_dist, '\\[[^]]*\\]')"
-    f" THEN {_lengths(_BRACKET)}"
-    f" ELSE {_lengths('win_dist')} END"
+    f" THEN {lengths_sql(_BRACKET)}"
+    f" ELSE {lengths_sql('win_dist')} END"
 )
 
 # Ind SP is '5/1', '9/2', '2/1F', 'Evens' -- but the workbook already supplies
