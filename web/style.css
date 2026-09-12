@@ -249,3 +249,67 @@ tbody tr.selected > td:first-child {
 .rc-table th { background: var(--head); font-weight: 600; }
 .rc-table tr:last-child td { border-bottom: 0; }
 .rc-table td.num { text-align: right; }
+
+/* ------------------------------------------------------------ form graph ---
+ *
+ * The graph takes its colours from the theme tokens rather than its own
+ * palette, so all 13 themes get it for free and it cannot drift from the table
+ * above it. --accent is the series colour: it is the only strong non-brand hue
+ * every theme defines, and it clears 3:1 against --bg in all of them.
+ *
+ * Text never wears the series colour -- headings and ticks use --fg/--muted,
+ * and the line and dots carry the data.
+ */
+.hf-out { margin-top: 18px; position: relative; }
+.hf-head { margin: 0 0 6px; }
+.hf-plot { overflow-x: auto; }
+.hf-svg { display: block; }
+
+.hf-title { fill: var(--fg); font-size: 12px; font-weight: 600; }
+.hf-sub, .hf-ytick, .hf-xtick { fill: var(--muted); font-size: 11px; }
+
+/* hairline, solid and one step off the surface: present but recessive */
+.hf-grid { stroke: var(--line); stroke-width: 1; }
+.hf-rule { stroke: var(--muted); stroke-width: 1; pointer-events: none; }
+
+.hf-line {
+  fill: none; stroke: var(--accent); stroke-width: 2;
+  stroke-linejoin: round; stroke-linecap: round;
+}
+/* the ring is what keeps a marker legible where the line passes under it */
+.hf-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
+
+.hf-boxes {
+  display: flex; flex-wrap: wrap; gap: 4px 16px;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line);
+}
+.hf-box {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; cursor: pointer; user-select: none;
+}
+.hf-box input { cursor: pointer; }
+
+.hf-tip {
+  position: absolute; z-index: 5; pointer-events: none;
+  min-width: 150px; padding: 6px 9px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 18%);
+  font-size: 12px; line-height: 1.5;
+}
+.hf-tip-head { color: var(--muted); margin-bottom: 3px; }
+.hf-tip-row { display: flex; align-items: baseline; gap: 6px; }
+/* a short stroke of the series colour keys the row; at this density a filled
+   box would be data-weight ink doing a label's job */
+.hf-tip-key {
+  width: 10px; height: 2px; border-radius: 1px;
+  background: var(--accent); flex: none; transform: translateY(-3px);
+}
+.hf-tip-row strong { font-variant-numeric: tabular-nums; }
+.hf-tip-row span:last-child { color: var(--muted); }
+
+/* a runner row picks the horse the graph plots */
+.rc-table tbody tr.pickable { cursor: pointer; }
+.rc-table tbody tr.pickable:hover > td { background: var(--row-hover); }
+.rc-table tbody tr.selected > td { background: var(--row-hover); }
+.rc-table tbody tr.selected > td:first-child { box-shadow: inset 3px 0 0 var(--brand); }

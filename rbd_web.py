@@ -163,6 +163,51 @@ RACECARD_STATS = [
     ("med_win_dist_len", "MedWinDistLen", "DOUBLE", "round(median(win_dist_len), 2)"),
 ]
 
+# How far behind the winner this row finished, in lengths. Shared by the card's
+# WinDistLen columns and the graph, so the two cannot disagree. The winner is
+# none behind, so its empty Winning Distance reads as 0 rather than unknown; a
+# non-finisher has no meaningful distance and stays NULL.
+WIN_DIST_LEN = (
+    f"CASE WHEN f.place = '1' THEN 0.0 ELSE {lengths_sql('f.winning_distance')} END"
+)
+
+# The graph beneath the card: one point per qualifying past race, plotted
+# against the date it was run.
+#
+# Every one of these is a column of the same `form` rows the card aggregates, so
+# a point on the graph is always one of the runs the card counted -- select
+# "£1 invest" here and the points are exactly the values its total sums.
+#
+# `better` drives a direction hint in the panel heading. The y axes are NOT
+# flipped to make "up" mean "good": a reader who misses that a single axis is
+# inverted misreads the whole panel, and half of these have no better direction
+# anyway. Saying which way is good in words costs nothing and cannot mislead.
+#
+# (name, label, better, per-row expression over the form CTE)
+HORSE_METRICS = [
+    ("place", "Place", "lower", "TRY_CAST(place AS DOUBLE)"),
+    # the individual returns that one_pnd_invest above sums
+    ("invest", "£1 invest", "higher",
+     "CASE WHEN place = '1' THEN industry_sp ELSE 0 END"),
+    ("win_dist_len", "Winning Distance", "lower", "win_dist_len"),
+    # The three below are not in the ticket. They are here because the question
+    # the graph exists to answer is "is this horse going the right way", and a
+    # finishing position alone cannot say: 3rd of 4 and 3rd of 20 plot
+    # identically.
+    #   Industry SP  - what the market made of it each time, so a shortening
+    #                  price shows confidence building
+    #   Official Rating - the handicapper's own assessment, which is the closest
+    #                  thing in the data to a measured ability trend
+    #   % Rivals Beaten - the source's own PRB, which is Place normalised by
+    #                  field size, so it is comparable across a big field and a
+    #                  match. 100 = won, 0 = last.
+    ("industry_sp", "Industry SP", None, "industry_sp"),
+    ("official_rating", "Official Rating", "higher", "official_rating"),
+    ("prb", "% Rivals Beaten", "higher", "round(prb * 100, 1)"),
+]
+
+DEFAULT_METRIC = "place"
+
 
 def dataset(request):
     key = request.query_params.get("dataset", "results")
@@ -408,12 +453,7 @@ def racecard(request: Request):
             SELECT DISTINCT ON (f.horse, f.race_date, f.track, f.race_time)
                    f.horse, f.race_date, f.race_time, f.track, f.place,
                    f.industry_sp,
-                   -- how far behind the winner, in lengths. The winner is none,
-                   -- so its empty Winning Distance reads as 0 rather than
-                   -- unknown; a non-finisher has no meaningful distance and
-                   -- stays NULL, which the min/max/avg/median then skip.
-                   CASE WHEN f.place = '1' THEN 0.0
-                        ELSE {lengths_sql("f.winning_distance")} END AS win_dist_len
+                   {WIN_DIST_LEN} AS win_dist_len
             FROM {PRERACE_TABLE} f, race
             WHERE f.horse IN (SELECT horse FROM runners)
               AND f.race_type = race.race_type
@@ -446,6 +486,69 @@ def racecard(request: Request):
                     for c, l in RACECARD_FIELDS]
         + [{"name": a, "label": l, "type": t} for a, l, t, _ in RACECARD_STATS],
         "rows": [[None if v is None else str(v) for v in r] for r in rows],
+    }
+
+
+@app.get("/api/horseform")
+def horseform(request: Request):
+    """One horse's qualifying past races, as a time series for the graph.
+
+    Same race, same "similar race" rule and same per-row values as
+    /api/racecard -- this returns the individual rows that endpoint aggregates,
+    oldest first, so a point on the graph is always one of the runs the card
+    counted.
+
+    Values are returned as numbers rather than strings, because the client
+    plots them. place_text comes along beside the numeric place so the tooltip
+    can show 'PU' for a run that has no number.
+    """
+    day = (request.query_params.get("date") or "").strip()
+    track = (request.query_params.get("track") or "").strip()
+    time_ = (request.query_params.get("time") or "").strip()
+    horse = (request.query_params.get("horse") or "").strip()
+    if not (day and track and time_ and horse):
+        raise HTTPException(400, "date, track, time and horse are all required")
+
+    metrics = ",\n                   ".join(
+        f"{sql} AS {name}" for name, _, _, sql in HORSE_METRICS
+    )
+    names = ", ".join(name for name, _, _, _ in HORSE_METRICS)
+    sql = f"""
+        WITH race AS (
+            SELECT race_type, distance FROM {RACES_TABLE}
+            WHERE race_date = TRY_CAST(? AS DATE)
+              AND track = ? AND race_time = TRY_CAST(? AS TIME)
+        ),
+        -- one row per past race; see /api/racecard for why DISTINCT ON
+        form AS (
+            SELECT DISTINCT ON (f.race_date, f.track, f.race_time)
+                   f.race_date, f.race_time, f.track, f.place, f.industry_sp,
+                   f.official_rating, f.prb,
+                   {WIN_DIST_LEN} AS win_dist_len
+            FROM {PRERACE_TABLE} f, race
+            WHERE f.horse = ?
+              AND f.race_type = race.race_type
+              AND f.distance = race.distance
+              AND f.race_date < TRY_CAST(? AS DATE)
+            ORDER BY f.race_date, f.track, f.race_time, f.prerace_date
+        )
+        SELECT race_date, track, place,
+               {metrics}
+        FROM form ORDER BY race_date, race_time
+    """
+    cur = db()
+    rows = cur.execute(sql, [day, track, time_, horse, day]).fetchall()
+    return {
+        "horse": horse,
+        "race": {"date": day, "track": track, "time": time_},
+        "metrics": [{"name": n, "label": l, "better": b}
+                    for n, l, b, _ in HORSE_METRICS],
+        "default": DEFAULT_METRIC,
+        "points": [
+            {"date": str(r[0]), "track": r[1], "place_text": r[2],
+             "values": dict(zip(names.split(", "), r[3:]))}
+            for r in rows
+        ],
     }
 
 
