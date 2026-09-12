@@ -312,31 +312,104 @@ function createGrid(root, ds) {
     if (hint) hint.textContent = `${pick.track} ${pick.time} — ${pick.date}`;
   }
 
+  // the form graph under the card, if this dataset has the drill-down. Set at
+  // the bottom of this factory, once the panel's markup exists.
+  let chart = null;
+
+  /** A one-line message in a detail pane, replacing whatever was there. */
+  function note(host, msg) {
+    host.textContent = '';
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = msg;
+    host.append(p);
+  }
+
   async function showRaceCard() {
     const out = root.querySelector('.rc-out');
     const pick = state.selected;
     if (!out || !pick) return;
-    out.innerHTML = '<p class="hint">Loading…</p>';
+    note(out, 'Loading…');
+    if (chart) chart.clear();
+    state.horse = null;
     try {
       const q = new URLSearchParams({ date: pick.date, track: pick.track, time: pick.time });
       const data = await getJSON('/api/racecard?' + q);
       if (!data.rows.length) {
-        out.innerHTML = '<p class="hint">No runners recorded for this race.</p>';
+        note(out, 'No runners recorded for this race.');
         return;
       }
-      const head = data.columns.map((c) => `<th>${c.label}</th>`).join('');
-      const body = data.rows.map((r) => '<tr>' + r.map((v, i) => {
-        const num = NUMERIC.has(data.columns[i].type);
-        return v === null
-          ? '<td class="null">—</td>'
-          : `<td${num ? ' class="num"' : ''}>${v}</td>`;
-      }).join('') + '</tr>').join('');
-      out.innerHTML =
-        `<h3 class="rc-title">${pick.track} ${pick.time} · ${pick.date}` +
-        ` <span class="hint">${data.rows.length} runners</span></h3>` +
-        `<table class="rc-table grid"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+      // built through the DOM rather than innerHTML: the cells are horse,
+      // jockey and trainer names out of the database, and each row needs a
+      // click handler anyway
+      out.textContent = '';
+      const h3 = document.createElement('h3');
+      h3.className = 'rc-title';
+      h3.append(document.createTextNode(`${pick.track} ${pick.time} · ${pick.date} `));
+      const count = document.createElement('span');
+      count.className = 'hint';
+      count.textContent = `${data.rows.length} runners`;
+      h3.append(count);
+
+      const table = document.createElement('table');
+      table.className = 'rc-table grid';
+      const thead = document.createElement('thead');
+      const hrow = document.createElement('tr');
+      for (const c of data.columns) {
+        const th = document.createElement('th');
+        th.textContent = c.label;
+        hrow.append(th);
+      }
+      thead.append(hrow);
+      const tbody = document.createElement('tbody');
+      const horseAt = data.columns.findIndex((c) => c.name === 'horse');
+
+      data.rows.forEach((r) => {
+        const tr = document.createElement('tr');
+        r.forEach((v, i) => {
+          const td = document.createElement('td');
+          if (v === null) { td.textContent = '—'; td.className = 'null'; }
+          else {
+            td.textContent = v;
+            if (NUMERIC.has(data.columns[i].type)) td.className = 'num';
+          }
+          tr.append(td);
+        });
+        const horse = r[horseAt];
+        if (chart && horse) {
+          tr.classList.add('pickable');
+          tr.onclick = () => selectHorse(horse);
+        }
+        tbody.append(tr);
+      });
+      table.append(thead, tbody);
+      out.append(h3, table);
+
+      // open on the favourite, so the graph is never an empty frame waiting to
+      // be clicked -- the card is already sorted into market order
+      const first = data.rows[0] && data.rows[0][horseAt];
+      if (first) selectHorse(first);
     } catch (e) {
-      out.innerHTML = '';
+      out.textContent = '';
+      banner(e.message);
+    }
+  }
+
+  /** Load and plot one runner's form, and mark its row as the chosen one. */
+  async function selectHorse(horse) {
+    const pick = state.selected;
+    if (!chart || !pick) return;
+    state.horse = horse;
+    for (const tr of root.querySelectorAll('.rc-table tbody tr')) {
+      const cell = tr.querySelector('td');
+      tr.classList.toggle('selected', !!cell && cell.textContent === horse);
+    }
+    try {
+      const q = new URLSearchParams({
+        date: pick.date, track: pick.track, time: pick.time, horse,
+      });
+      chart.show(await getJSON('/api/horseform?' + q));
+    } catch (e) {
       banner(e.message);
     }
   }
@@ -344,6 +417,8 @@ function createGrid(root, ds) {
   if (ds.detail === 'racecard') {
     const btn = root.querySelector('.rc-view');
     if (btn) btn.onclick = showRaceCard;
+    const host = root.querySelector('.hf-out');
+    if (host && window.nmHorseChart) chart = window.nmHorseChart(host);
   }
 
   return {

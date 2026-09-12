@@ -376,6 +376,56 @@ once several cards are loaded a race's runners also appear as form history in
 later cards — carrying the actual SP rather than the morning's — and the same
 horse comes back twice.
 
+#### The form graph
+
+Clicking a runner plots its form beneath the card. The x axis is always the date
+the race was run; the metrics are checkboxes below the graph and any number can
+be on at once. It opens on the favourite with **Place** ticked, so there is no
+empty frame waiting to be clicked.
+
+| Metric | What it plots |
+| --- | --- |
+| `Place` | finishing position (default) |
+| `£1 invest` | the return from that one race — the individual values the card's total sums |
+| `Winning Distance` | lengths behind the winner |
+| `Industry SP` | the price each time, so a shortening market shows as a fall |
+| `Official Rating` | the handicapper's own assessment |
+| `% Rivals Beaten` | the source's PRB — `Place` normalised by field size. 100 = won |
+
+The last three are not in the ticket. They are there because "is this horse
+going the right way" is the question the graph exists to answer, and finishing
+position alone cannot say: 3rd of 4 and 3rd of 20 plot identically.
+
+Points come from `/api/horseform?date=&track=&time=&horse=`, which applies the
+same "similar race" rule as the card and returns the individual rows the card
+aggregates — so a point on the graph is always one of the runs the card counted,
+and ticking `£1 invest` plots exactly the values behind its total.
+
+**Small multiples, one panel per metric, never a shared y axis.** `Place` runs
+1–30, `£1 invest` 0–500 and `Winning Distance` 0–240 lengths. Sharing an axis
+would flatten whichever is smaller into a line along the bottom, and giving each
+its own axis on one plot invents a correlation that is not in the data. Stacked
+panels on a common time axis compare the shapes honestly and keep every axis
+readable.
+
+Some deliberate details:
+
+- **The axes are not flipped to make "up" mean "good".** Half these metrics have
+  no better direction, and a reader who misses that one axis is inverted
+  misreads the whole panel. Each heading says which way is good instead.
+- **A missing value breaks the line rather than being interpolated across.** A
+  pulled-up run has no finishing distance, and drawing straight through it would
+  invent a result. The run simply has no point.
+- **Time is real time, not race number**, so a layoff shows as a gap.
+- Date labels are chosen by pixel spacing rather than every *n*th race — races
+  cluster, so stepping by index collides.
+
+`web/chart.js` is hand-written SVG built through the DOM. There is no build step
+in this project and no chart library, and the colours come from the theme tokens
+(`--accent` for the line and markers, `--line` for the grid, `--muted`/`--fg`
+for text) rather than a palette of its own — so all 13 themes get it for free,
+including High Contrast. `--accent` clears 3:1 against `--bg` in every theme.
+
 ```bash
 ./nag.sh start        # start it, wait until it answers, print the URL
 ./nag.sh stop
