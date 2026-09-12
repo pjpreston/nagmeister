@@ -31,6 +31,7 @@ python rbd_results.py months      # list the archived months
 python rbd_results.py today       # today's file (updates through the day)
 python rbd_results.py archive 26H_Aug-26
 python rbd_results.py backfill    # every month, skipping what's done
+python rbd_results.py backfill --from 01/09/2025   # just from there onwards
 ```
 
 Everything except `sample` and `months` needs an Advanced membership:
@@ -40,13 +41,35 @@ export RBD_USER=... RBD_PASS=...
 ```
 
 Flags: `--delay N` seconds between requests (default 3, or `$RBD_DELAY`),
-`--force` to re-download files already on disk.
+`--force` to re-download files already on disk, `--from DATE` to start a
+backfill at a given race day, `--dry-run` to list what a backfill would fetch
+without downloading anything.
 
 The site monitors download volume per IP, so requests are throttled and
 backfills resume rather than refetch — finished past months are skipped
 without a request, while the current month is always rechecked for new
 race days. A full backfill is several hundred MB and takes roughly 15
 minutes at the default delay.
+
+### Backfilling from a date
+
+A backfill always runs **oldest month first**, so it proceeds towards the
+current date. The site's month dropdown is newest-first, which is the wrong
+direction when you are filling a gap.
+
+`--from` takes `DD/MM/YYYY` or `YYYY-MM-DD` and filters to the day, not just
+the month — `--from 15/09/2025` starts at `Results - 15092025.xlsx` and skips
+the fourteen earlier files September 2025 also holds.
+
+A month that `--from` only took part of is deliberately **not** marked
+`.complete`, so a later full backfill still collects the days it skipped.
+
+`--dry-run` lists the months and files that would be fetched, in order, and
+downloads nothing. Worth using before committing to a long run:
+
+```bash
+python rbd_results.py backfill --from 15/09/2025 --dry-run
+```
 
 ## Getting the pre-race data
 
@@ -63,6 +86,9 @@ data/results/2026-09/Results - 06092026.xlsx
 python rbd_prerace.py                  # today's pre-race file
 python rbd_prerace.py sample           # public sample, no login
 python rbd_prerace.py --skip-existing  # for a cron job: no-op if already have it
+python rbd_prerace.py months           # list the archived months
+python rbd_prerace.py backfill --from 01/09/2025
+python rbd_prerace.py archive 25I_Sep-25
 ```
 
 The workbook holds a sheet per meeting plus `Combined` and `Selections`; the
@@ -76,6 +102,30 @@ Without that, each day would overwrite the last.
 
 Sign-in and throttling are imported from `rbd_results.py` rather than
 reimplemented, so both tools authenticate identically and share one rate limiter.
+
+### Backfilling the pre-race history
+
+`/today/` and `/results/` are two pages of the same WebForms app and render the
+same sidebar month archive over the same month values, so the backfill here *is*
+the results one, pointed at a different page and output directory — see
+`Archive` in `rbd_results.py`. `backfill`, `archive`, `months`, `--from`,
+`--force` and `--dry-run` therefore behave exactly as they do there, including
+running oldest-month-first.
+
+Only the naming differs. The archive lists these workbooks as
+`Daily30092025.xlsx` while `python rbd_prerace.py` files today's download as
+`Daily - 30092025.xlsx`. Both go through one `prerace_name()`, so a backfill
+recognises days already on disk instead of refetching them under a second
+spelling — which matters against a site that meters downloads per IP.
+
+Without a backfill the pre-race history was only ever the days the tool happened
+to be run on. The archive goes back to Aug-20, about 30 files a month at roughly
+7MB each, so pull what you need rather than all of it:
+
+```bash
+python rbd_prerace.py backfill --from 01/09/2025 --dry-run   # check first
+python rbd_prerace.py backfill --from 01/09/2025
+```
 
 ## Loading the data into a database
 
