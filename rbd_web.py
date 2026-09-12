@@ -128,6 +128,27 @@ RACECARD_FIELDS = [
     ("industry_sp", "Industry SP"),
 ]
 
+# Per-horse form at this race's own race type and distance, from prerace_form.
+#
+# "Similar race" is same race_type AND same distance, which is what makes these
+# worth reading: a horse's record over 5f handicaps says little about how it
+# goes over 2m hurdles. Only runs *before* the selected race count.
+#
+# (alias, label, type, aggregate over the horse's qualifying past runs)
+RACECARD_STATS = [
+    ("n_races", "#Races", "INTEGER", "count(*)"),
+    ("n_wins", "#Wins", "INTEGER", "count(*) FILTER (WHERE place = '1')"),
+    # most recent finishing position. Kept as text because it can be 'PU', and
+    # DATE + TIME orders two runs on the same day correctly
+    ("last_plc", "Last Plc", "VARCHAR", "arg_max(place, race_date + race_time)"),
+    # TRY_CAST leaves the non-finishers ('PU', 'F', 'UR', 'BD', 'DSQ' -- 1,358
+    # rows) NULL, and avg/median skip nulls. So a pulled-up run still counts
+    # towards #Races, where it belongs, but cannot drag an average it has no
+    # meaningful value for.
+    ("avg_plc", "Avg Plc", "DOUBLE", "round(avg(TRY_CAST(place AS DOUBLE)), 2)"),
+    ("med_plc", "Med Plc", "DOUBLE", "round(median(TRY_CAST(place AS DOUBLE)), 2)"),
+]
+
 
 def dataset(request):
     key = request.query_params.get("dataset", "results")
@@ -329,6 +350,10 @@ def racecard(request: Request):
     A race is identified by (race_date, track, race_time) -- the key of the
     races table. Matching prerace_form on those three gives the horses that ran
     in that race; for a race on the card date those are the declared runners.
+
+    Each runner also carries its record over this race's own race type and
+    distance (RACECARD_STATS), so the card can be read as form rather than just
+    a list of names.
     """
     day = (request.query_params.get("date") or "").strip()
     track = (request.query_params.get("track") or "").strip()
@@ -336,21 +361,62 @@ def racecard(request: Request):
     if not (day and track and time_):
         raise HTTPException(400, "date, track and time are all required")
 
-    cols = ", ".join(f'"{c}"' for c, _ in RACECARD_FIELDS)
+    cols = ", ".join(f'r."{c}"' for c, _ in RACECARD_FIELDS)
+    aggs = ",\n                   ".join(
+        f"{sql} AS {alias}" for alias, _, _, sql in RACECARD_STATS
+    )
+    stat_cols = ", ".join(f"s.{alias}" for alias, _, _, _ in RACECARD_STATS)
+    sql = f"""
+        WITH race AS (
+            SELECT race_type, distance FROM {RACES_TABLE}
+            WHERE race_date = TRY_CAST(? AS DATE)
+              AND track = ? AND race_time = TRY_CAST(? AS TIME)
+        ),
+        -- prerace_date = race_date restricts this to the card the race was
+        -- declared on, which is also how the races table itself is built. Once
+        -- several cards are loaded a race's runners also appear as form history
+        -- in later cards, with the actual SP rather than the morning's, and
+        -- without this the same horse comes back twice.
+        runners AS (
+            SELECT DISTINCT {", ".join(f'"{c}"' for c, _ in RACECARD_FIELDS)}
+            FROM {PRERACE_TABLE}
+            WHERE race_date = TRY_CAST(? AS DATE)
+              AND track = ? AND race_time = TRY_CAST(? AS TIME)
+              AND prerace_date = race_date
+        ),
+        -- one row per past race, not per row held: a horse declared on several
+        -- of the loaded cards carries its whole history in each of them, so
+        -- counting rows would count those runs once per card.
+        form AS (
+            SELECT DISTINCT f.horse, f.race_date, f.race_time, f.track, f.place
+            FROM {PRERACE_TABLE} f, race
+            WHERE f.horse IN (SELECT horse FROM runners)
+              AND f.race_type = race.race_type
+              AND f.distance = race.distance
+              -- strictly earlier races only. The ticket describes this as
+              -- "rows - 1", which excludes the horse's row for today; going by
+              -- date is the same thing for the latest card and stays right for
+              -- an earlier one, where later cards have since added runs that
+              -- are still in the future as far as this race is concerned.
+              AND f.race_date < TRY_CAST(? AS DATE)
+        ),
+        stats AS (
+            SELECT horse,
+                   {aggs}
+            FROM form GROUP BY horse
+        )
+        SELECT {cols}, {stat_cols}
+        FROM runners r LEFT JOIN stats s USING (horse)
+        -- by market rank, so the favourite leads as a card would print it
+        ORDER BY r.industry_sp NULLS LAST, r.horse
+    """
     cur = db()
-    rows = cur.execute(
-        f"SELECT DISTINCT {cols} FROM {PRERACE_TABLE}"
-        f" WHERE race_date = TRY_CAST(? AS DATE)"
-        f"   AND track = ?"
-        f"   AND race_time = TRY_CAST(? AS TIME)"
-        # by market rank, so the favourite leads as a card would print it
-        f" ORDER BY industry_sp NULLS LAST, horse",
-        [day, track, time_],
-    ).fetchall()
+    rows = cur.execute(sql, [day, track, time_, day, track, time_, day]).fetchall()
     return {
         "race": {"date": day, "track": track, "time": time_},
         "columns": [{"name": c, "label": l, "type": PRERACE_TYPE.get(c, "VARCHAR")}
-                    for c, l in RACECARD_FIELDS],
+                    for c, l in RACECARD_FIELDS]
+        + [{"name": a, "label": l, "type": t} for a, l, t, _ in RACECARD_STATS],
         "rows": [[None if v is None else str(v) for v in r] for r in rows],
     }
 

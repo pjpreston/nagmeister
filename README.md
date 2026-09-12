@@ -317,6 +317,45 @@ The runners come from `/api/racecard?date=&track=&time=`, which matches
 `prerace_form` on `(race_date, track, race_time)` — the key of the `races`
 table. For a race on the card date those rows are the declared runners.
 
+#### Form on the card
+
+Each runner also carries its record **over this race's own race type and
+distance**, so the card reads as form rather than a list of names:
+
+| Column | Meaning |
+| --- | --- |
+| `#Races` | qualifying races the horse has run before this one |
+| `#Wins` | how many of those it won (`Place` = 1) |
+| `Last Plc` | finishing position in the most recent one |
+| `Avg Plc` | mean finishing position |
+| `Med Plc` | median finishing position |
+
+Same race type *and* distance is what makes these worth reading — a horse's
+record over 5f handicaps says little about how it goes over 2m hurdles. About
+half the runners on a card have no qualifying history at all and show `—`;
+maidens and first-season two-year-olds mostly have none by definition.
+
+Three things the SQL is careful about, all in `RACECARD_STATS` and the
+`/api/racecard` query:
+
+- **Only earlier races count.** The ticket describes `#Races` as "rows − 1",
+  meaning exclude the horse's row for today. Going by date is the same thing for
+  the newest card and stays right for an older one, where later cards have since
+  added runs that are still in the future as far as that race is concerned.
+- **Rows are deduplicated to races.** A horse declared on several loaded cards
+  carries its whole history in each of them, so counting rows would count those
+  runs once per card.
+- **Non-finishers count once but are not averaged.** `PU`, `F`, `UR`, `BD` and
+  `DSQ` land in `#Races`, where they belong, but `TRY_CAST` leaves them NULL so
+  they cannot drag an average they have no meaningful value for. `Last Plc` is
+  text for the same reason — it can legitimately read `PU`.
+
+The runner list is scoped to `prerace_date = race_date`, the card the race was
+declared on, which is also how the `races` table itself is built. Without that,
+once several cards are loaded a race's runners also appear as form history in
+later cards — carrying the actual SP rather than the morning's — and the same
+horse comes back twice.
+
 ```bash
 ./nag.sh start        # start it, wait until it answers, print the URL
 ./nag.sh stop
