@@ -136,7 +136,14 @@ RACECARD_FIELDS = [
 # goes over 2m hurdles. Only runs *before* the selected race count.
 #
 # (alias, label, type, aggregate over the horse's qualifying past runs)
-_PLACE_FORM = [
+RACECARD_STATS = [
+    # What £1 to win on this horse, every time it ran one of these races, would
+    # have come back. industry_sp is already decimal and stake-inclusive, so a
+    # winner at 6.0 returns 6 and everything else returns nothing. Summed, not
+    # averaged: the question is what the whole sequence of bets paid, so a horse
+    # that has never won one of these reads 0.0 rather than empty.
+    ("one_pnd_invest", "£1 invest", "DOUBLE",
+     "round(sum(CASE WHEN place = '1' THEN industry_sp ELSE 0 END), 2)"),
     ("n_races", "#Races", "INTEGER", "count(*)"),
     ("n_wins", "#Wins", "INTEGER", "count(*) FILTER (WHERE place = '1')"),
     # most recent finishing position. Kept as text because it can be 'PU', and
@@ -148,41 +155,13 @@ _PLACE_FORM = [
     # meaningful value for.
     ("avg_plc", "Avg Plc", "DOUBLE", "round(avg(TRY_CAST(place AS DOUBLE)), 2)"),
     ("med_plc", "Med Plc", "DOUBLE", "round(median(TRY_CAST(place AS DOUBLE)), 2)"),
-]
-
-# SCRUM-23 asks for those same five again under its own names, to sit alongside
-# the set above rather than replace it. They are generated from the definitions
-# above rather than written out a second time: the two sets are the same numbers
-# by construction, and two hand-maintained copies would eventually disagree.
-_ALSO_AS = {
-    "n_races": "#Races2",
-    "n_wins": "#Wins2",
-    "last_plc": "LastPlc2",
-    "avg_plc": "AvgPlc2",
-    "med_plc": "MedPlc2",
-}
-
-# What £1 to win on this horse, every time it ran one of these races, would have
-# come back. industry_sp is already decimal and stake-inclusive, so a winner at
-# 6.0 returns 6 and everything else returns nothing. Summed, not averaged: the
-# question is what the whole sequence of bets paid.
-_ONE_PND_WIN = "round(sum(CASE WHEN place = '1' THEN industry_sp ELSE 0 END), 2)"
-
-# Spread of how far the horse finished behind the winner, over the same races.
-# win_dist_len is computed per row in the form CTE; see the query.
-_WIN_DIST_SPREAD = [
+    # Spread of how far the horse finished behind the winner, over the same
+    # races. win_dist_len is computed per row in the form CTE; see the query.
     ("max_win_dist_len", "MaxWinDistLen", "DOUBLE", "round(max(win_dist_len), 2)"),
     ("min_win_dist_len", "MinWinDistLen", "DOUBLE", "round(min(win_dist_len), 2)"),
     ("avg_win_dist_len", "AvgWinDistLen", "DOUBLE", "round(avg(win_dist_len), 2)"),
     ("med_win_dist_len", "MedWinDistLen", "DOUBLE", "round(median(win_dist_len), 2)"),
 ]
-
-RACECARD_STATS = (
-    _PLACE_FORM
-    + [("one_pnd_win2", "£1 win2", "DOUBLE", _ONE_PND_WIN)]
-    + [(f"{a}2", _ALSO_AS[a], t, sql) for a, _, t, sql in _PLACE_FORM]
-    + _WIN_DIST_SPREAD
-)
 
 
 def dataset(request):
