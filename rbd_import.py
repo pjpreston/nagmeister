@@ -10,6 +10,12 @@ filename. Columns after AJ are the raw in-play tick data and are ignored.
     python rbd_import.py --file "data/results/2026-09/Results - 04092026.xlsx"
     python rbd_import.py --status             # what's loaded
     python rbd_import.py --schema             # print the DDL and exit
+    python rbd_import.py --rederive           # recompute the derived columns
+
+Three derived columns are computed as each row goes in: dist_yds (the race
+length in yards), win_dist_len (lengths behind the winner) and one_pnd_win
+(what £1 to win would have returned). --rederive recomputes them in place for
+rows already loaded, which needs no workbook.
 
 Re-running is safe: a file already recorded in `loaded_files` is skipped, so
 the normal workflow is to run rbd_results.py to fetch new days and then run
@@ -93,6 +99,126 @@ COLUMNS = [
     ("AJ", "Last Traded Price", "last_traded_price", "DOUBLE"),
 ]
 N_COLS = len(COLUMNS)
+
+# ---------------------------------------------------------------- derived ---
+#
+# Three numbers the workbook does not carry, computed as each row is inserted.
+# The source columns are text that is awkward to do arithmetic on: Distance is
+# '1m3½f', WinDist is '½-[3½]', and what a £1 win bet returned needs Place and
+# Ind SP read together.
+#
+# Deliberately NOT part of COLUMNS. That list is the positional map onto the
+# sheet's columns A..AJ -- source_columns() slices the workbook's own headers to
+# len(COLUMNS) -- so anything added to it would be looked for in the file, and
+# these are not in the file.
+#
+# The expressions are written against the *destination* column names rather than
+# the cast expressions, so the same strings serve both the INSERT and --rederive
+# and the two cannot drift apart.
+
+# 1760 yards to the mile, 220 to the furlong.
+YARDS_PER_MILE = 1760
+YARDS_PER_FURLONG = 220
+
+# Fractions in this data are only ever quarters. Checked across all 217,962
+# rows of both Distance ('2m½f', '1m3½f') and WinDist ('1¼', '½-[3½]') -- no
+# eighths appear, so there is no point handling them until they do.
+FRACTIONS = {"¼": 0.25, "½": 0.5, "¾": 0.75}
+
+# The named margins, in lengths. Racing writes a sub-length gap as a body part
+# rather than a number, and these seven are the complete set in the data --
+# 3,545 rows. Deliberately a whitelist: 'Min Price' and 'WinDist' also turn up
+# in WinDist on the files with shifted columns, and those must stay NULL rather
+# than being invented into a distance.
+MARGINS = {
+    "nse": 0.01,      # nose
+    "shd": 0.05,      # short head
+    "sht-hd": 0.05,
+    "hd": 0.10,       # head
+    "snk": 0.20,      # short neck
+    "nk": 0.25,       # neck
+    "dht": 0.0,       # dead heat -- not behind at all
+}
+
+# the character class shared by every pattern below, so they cannot disagree
+_FRAC_CLASS = "".join(FRACTIONS)
+
+
+def _case(expr, mapping, default="NULL"):
+    """SQL CASE over a str->number mapping."""
+    whens = " ".join(f"WHEN '{k}' THEN {v}" for k, v in mapping.items())
+    return f"CASE {expr} {whens} ELSE {default} END"
+
+
+def _frac(expr):
+    """The fraction character in expr as a decimal, or 0 if there is none."""
+    return _case(f"regexp_extract({expr}, '([{_FRAC_CLASS}])', 1)", FRACTIONS, default=0)
+
+
+def _whole(expr):
+    """The leading run of digits in expr as a number, or 0 if there is none."""
+    return f"COALESCE(TRY_CAST(NULLIF(regexp_extract({expr}, '^([0-9]*)', 1), '') AS DOUBLE), 0)"
+
+
+def _lengths(expr):
+    """A beaten margin as decimal lengths: '1¼' -> 1.25, 'nk' -> 0.25.
+
+    NULL for anything that is neither. Note a plain decimal like '14.5' is
+    rejected too: that only shows up in the shifted-column files, where WinDist
+    is holding a price, and NULL beats a plausible-looking wrong margin.
+    """
+    numeric = (
+        f"CASE WHEN regexp_matches({expr}, '^[0-9]*[{_FRAC_CLASS}]?$') AND {expr} <> ''"
+        f" THEN {_whole(expr)} + {_frac(expr)} END"
+    )
+    return f"COALESCE({numeric}, {_case(f'trim({expr})', MARGINS)})"
+
+
+# 'Distance' is <miles>m<furlongs>f with either part optional and the furlongs
+# optionally fractional: '7f', '1m', '2m½f', '1m3½f', '7½f'. 59 distinct values
+# across the data, all matching this. Anything else -- including the junk the
+# shifted-column files leave here -- is NULL rather than a guess.
+_DIST_GRAMMAR = f"'^([0-9]+m)?([0-9]*[{_FRAC_CLASS}]?f)?$'"
+_MILES = "regexp_extract(distance, '([0-9]+)m', 1)"
+_FURLONGS = f"regexp_extract(distance, '([0-9]*)[{_FRAC_CLASS}]?f', 1)"
+
+DIST_YDS_SQL = (
+    f"CASE WHEN distance IS NULL"
+    f"       OR NOT regexp_matches(distance, {_DIST_GRAMMAR})"
+    f"       OR NOT regexp_matches(distance, '[0-9{_FRAC_CLASS}]') THEN NULL"
+    f"     ELSE COALESCE(TRY_CAST(NULLIF({_MILES}, '') AS DOUBLE), 0) * {YARDS_PER_MILE}"
+    f"        + (COALESCE(TRY_CAST(NULLIF({_FURLONGS}, '') AS DOUBLE), 0)"
+    # the only fraction a distance ever carries is the furlong one -- miles are
+    # always whole -- so this can just look for a fraction anywhere in the value
+    f"           + {_frac('distance')}) * {YARDS_PER_FURLONG}"
+    f" END"
+)
+
+# WinDist is either a bare margin ('1¼') or gap-[cumulative] ('½-[3½]'), where
+# the bracketed figure is the distance behind the *winner* -- which is what we
+# want. Empty means the winner, hence 0.
+_BRACKET = "regexp_extract(win_dist, '\\[([^]]*)\\]', 1)"
+
+WIN_DIST_LEN_SQL = (
+    "CASE WHEN win_dist IS NULL THEN 0.0"
+    " WHEN regexp_matches(win_dist, '\\[[^]]*\\]')"
+    f" THEN {_lengths(_BRACKET)}"
+    f" ELSE {_lengths('win_dist')} END"
+)
+
+# Ind SP is '5/1', '9/2', '2/1F', 'Evens' -- but the workbook already supplies
+# the decimal equivalent, and it is the stake-inclusive one this wants: 5/1 is
+# 6.0, exactly the £5 winnings plus the £1 back. So there is no odds parsing to
+# do. Populated for all but 7 of 17,973 winners; those stay NULL, which is
+# honest -- unknown odds are not a zero return.
+ONE_PND_WIN_SQL = "CASE WHEN trim(place) = '1' THEN ind_sp_decimal ELSE 0.0 END"
+
+#      db column,      label for the web UI,      type,     how to compute it
+DERIVED_COLUMNS = [
+    ("dist_yds",     "Dist (yds)",              "DOUBLE", DIST_YDS_SQL),
+    ("win_dist_len", "Behind Winner (lengths)", "DOUBLE", WIN_DIST_LEN_SQL),
+    ("one_pnd_win",  "£1 Win Return",           "DOUBLE", ONE_PND_WIN_SQL),
+]
 
 # --------------------------------------------------------------- pre-race ---
 #
@@ -229,9 +355,14 @@ EXCEL_EPOCH = "DATE '1899-12-30'"
 def ddl():
     cols = ",\n".join(f"    {db:<22} {typ}" for _, _, db, typ in COLUMNS)
     pre = ",\n".join(f"    {db:<22} {typ}" for _, _, db, typ in PRERACE_COLUMNS)
+    # the derived columns go after filename, which is what puts them "at the
+    # end" and, less obviously, is what keeps a migrated database identical to a
+    # fresh one: ALTER TABLE ADD COLUMN can only append, so declaring them
+    # anywhere else here would give the two different column orders
+    derived = ",\n".join(f"    {db:<22} {typ}" for db, _, typ, _ in DERIVED_COLUMNS)
     return (
         f"CREATE TABLE IF NOT EXISTS {TABLE} (\n{cols},\n"
-        f"    {'filename':<22} VARCHAR NOT NULL\n);\n\n"
+        f"    {'filename':<22} VARCHAR NOT NULL,\n{derived}\n);\n\n"
         f"CREATE TABLE IF NOT EXISTS {PRERACE_TABLE} (\n{pre},\n"
         # the day the workbook is for. race_date above is the historic date of
         # the run being described, so this is what identifies a load and what a
@@ -282,13 +413,38 @@ def cast_expr(src, typ):
     raise ValueError(f"unhandled type {typ}")
 
 
+def add_derived_columns(con):
+    """Bring a database created before the derived columns existed up to date.
+
+    ddl() is CREATE TABLE IF NOT EXISTS, so it does nothing to a table that is
+    already there -- without this, an existing database would silently keep
+    working and never grow the new columns. ADD COLUMN appends, which is the
+    same order ddl() declares them in. Values stay NULL until --rederive.
+    """
+    for db, _, typ, _ in DERIVED_COLUMNS:
+        con.execute(f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS {db} {typ}")
+
+
 def connect(db_path):
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(db_path))
     con.execute("INSTALL excel; LOAD excel;")
     con.execute(ddl())
+    add_derived_columns(con)
     return con
+
+
+def rederive(con):
+    """Recompute the derived columns for every row already loaded.
+
+    They are pure functions of columns the table already holds, so this needs
+    no workbook and no re-download -- which is what makes adding a derived
+    column to an existing database cheap. Same expressions the INSERT uses.
+    """
+    sets = ", ".join(f"{db} = {sql}" for db, _, _, sql in DERIVED_COLUMNS)
+    con.execute(f"UPDATE {TABLE} SET {sets}")
+    return con.execute(f"SELECT count(*) FROM {TABLE}").fetchone()[0]
 
 
 def sq(s):
@@ -325,6 +481,9 @@ def load_file(con, path, force=False):
     )
     # a workbook can carry trailing all-blank rows; they are not runners
     not_blank = " OR ".join(f'NULLIF(TRIM("{c}"), \'\') IS NOT NULL' for c in src)
+    src_cols = ", ".join(db for _, _, db, _ in COLUMNS)
+    derived_names = ", ".join(db for db, _, _, _ in DERIVED_COLUMNS)
+    derived_exprs = ",\n       ".join(sql for _, _, _, sql in DERIVED_COLUMNS)
     mtime = datetime.fromtimestamp(path.stat().st_mtime)
 
     con.execute("BEGIN TRANSACTION")
@@ -332,10 +491,17 @@ def load_file(con, path, force=False):
         if already:
             con.execute(f"DELETE FROM {TABLE} WHERE filename = ?", [name])
             con.execute(f"DELETE FROM {LEDGER} WHERE filename = ?", [name])
+        # the casts run in a subquery so the derived expressions can refer to
+        # the columns by their final names -- SQL will not let one select-list
+        # item reference another's alias. Naming the insert columns rather than
+        # relying on their position also means this no longer cares where in the
+        # table the derived columns sit.
         con.execute(
-            f"INSERT INTO {TABLE} SELECT\n       {selects},\n       {sq(name)} AS filename\n"
-            f"FROM read_xlsx({sq(path)}, sheet={sq(SHEET)}, all_varchar=true)\n"
-            f"WHERE {not_blank}"
+            f"INSERT INTO {TABLE} ({src_cols}, filename, {derived_names})\n"
+            f"SELECT {src_cols}, filename,\n       {derived_exprs}\n"
+            f"FROM (SELECT\n       {selects},\n       {sq(name)} AS filename\n"
+            f"      FROM read_xlsx({sq(path)}, sheet={sq(SHEET)}, all_varchar=true)\n"
+            f"      WHERE {not_blank}) t"
         )
         n = con.execute(f"SELECT count(*) FROM {TABLE} WHERE filename = ?", [name]).fetchone()[0]
         con.execute(
@@ -495,6 +661,8 @@ def main(argv=None):
     ap.add_argument("--force", action="store_true", help="reload files already loaded")
     ap.add_argument("--status", action="store_true", help="show what is loaded and exit")
     ap.add_argument("--schema", action="store_true", help="print the DDL and exit")
+    ap.add_argument("--rederive", action="store_true",
+                    help="recompute the derived columns for rows already loaded and exit")
     ap.add_argument("--prerace", action="store_true",
                     help="load the pre-race workbook instead of the results files;"
                          " today's unless --date is given")
@@ -510,6 +678,12 @@ def main(argv=None):
     if args.status:
         show_status(con)
         show_prerace_status(con)
+        return 0
+
+    if args.rederive:
+        n = rederive(con)
+        cols = ", ".join(db for db, _, _, _ in DERIVED_COLUMNS)
+        print(f"recomputed {cols} for {n:,} rows in {TABLE}")
         return 0
 
     if args.prerace:

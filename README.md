@@ -139,6 +139,7 @@ are ignored.
 .venv/bin/python rbd_import.py --date 04/09/2026  # just that race day
 .venv/bin/python rbd_import.py --status           # what's loaded
 .venv/bin/python rbd_import.py --schema           # print the DDL
+.venv/bin/python rbd_import.py --rederive         # recompute the derived columns
 ```
 
 Re-running is safe — files recorded in the `loaded_files` ledger are skipped, so
@@ -158,6 +159,54 @@ numeric for the first hundred-odd rows of most files and then hits `UR`, `PU` or
 literals (`#N/A`, `#DIV/0!`), empty strings and the en-dash used for missing
 ratings all land as `NULL`. Dates arrive as Excel serials in most files and as
 `DD/MM/YYYY` text in others; both are handled.
+
+### Derived columns
+
+Three numbers the workbook does not carry are computed as each row is inserted
+and stored at the end of `race_results`. The source columns are text that is
+awkward to do arithmetic on, and every query that wanted these was re-doing the
+same parsing.
+
+| Column | From | Meaning |
+| --- | --- | --- |
+| `dist_yds` | `Distance` | race length in yards. `1m3½f` → 1760 + 3.5 × 220 = **2530** |
+| `win_dist_len` | `WinDist` | lengths behind the **winner**. `0.0` for the winner |
+| `one_pnd_win` | `Place`, `Ind SP` | what £1 to win returned, stake included. `0` if it lost |
+
+`Distance` is `<miles>m<furlongs>f` with either part optional and the furlongs
+optionally fractional — `7f`, `1m`, `2m½f`, `1m3½f`, `7½f`. Only quarters occur
+across the whole dataset, so only quarters are handled.
+
+`WinDist` is either a bare margin (`1¼`) or `gap [cumulative]` (`½ [3½]`, written
+`½-[3½]` in older files). The bracketed figure is the distance behind the winner,
+which is the one worth storing — the bare number is only the gap to the horse in
+front. Racing also writes sub-length margins as body parts rather than numbers,
+so those are mapped to their conventional values:
+
+| `nse` | `shd` / `sht-hd` | `hd` | `snk` | `nk` | `dht` |
+| --- | --- | --- | --- | --- | --- |
+| 0.01 | 0.05 | 0.10 | 0.20 | 0.25 | 0.0 |
+
+It is a whitelist: anything else becomes `NULL` rather than a guess. That matters
+because the files with shifted columns (see below) leave prices and even header
+text in `WinDist`, and a plausible-looking wrong margin is worse than a null.
+
+`one_pnd_win` needs no odds parsing — the workbook's own `Ind SP Decimal` is
+already the stake-inclusive figure (`5/1` → `6.0`), including for `Evens` and the
+`F` favourite suffix.
+
+Despite the name, **`win_dist_len` is in lengths, not yards**. A length is about
+2.7 yards, so do not compare it with `dist_yds` without converting.
+
+Because all three are pure functions of columns already in the table, adding or
+changing one does not mean re-downloading or re-reading any workbook:
+
+```bash
+.venv/bin/python rbd_import.py --rederive    # recompute in place, every row
+```
+
+That is also the upgrade path for a database loaded before these columns
+existed: opening it adds the columns, and `--rederive` fills them in.
 
 ### Pre-race data
 
