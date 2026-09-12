@@ -232,7 +232,10 @@ tbody tr.selected > td:first-child {
   background: var(--brand); color: var(--bg); border-color: var(--brand);
 }
 .rc-hint { margin: 0; }
-.rc-out { margin-top: 12px; }
+/* the card is 14 nowrap columns once the form stats are on it, which is wider
+   than the panel on a laptop. Scroll it here rather than letting it stretch
+   the page and take the grid above with it. */
+.rc-out { margin-top: 12px; overflow-x: auto; padding-bottom: 2px; }
 .rc-title { margin: 0 0 8px; font-size: 14px; }
 .rc-title .hint { display: inline; font-weight: 400; }
 .rc-table {
