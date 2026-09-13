@@ -29,6 +29,12 @@
   const PAD_R = 14;         // so the last marker is not clipped
   const AXIS_H = 22;        // date labels, on the bottom panel only
   const R = 4;              // marker radius: 8px across, the minimum that reads
+  // keeps the first and last markers off the plot edges. Without it a point on
+  // the boundary has its ring clipped by the axis and reads as half a dot.
+  const X_INSET = 10;
+  // vertical room inside the band, so a point at the series maximum is not
+  // drawn touching the panel's top edge
+  const Y_INSET = 8;
 
   function svg(name, attrs) {
     const n = document.createElementNS(NS, name);
@@ -89,6 +95,7 @@
       for (const m of data.metrics) {
         const label = document.createElement('label');
         label.className = 'hf-box';
+        label.title = m.desc ? `${m.label}\n\n${m.desc}` : m.label;
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.checked = chosen.has(m.name);
@@ -139,9 +146,11 @@
       // x is real time, so a layoff shows as a gap rather than being closed up
       const t = pts.map((p) => Date.parse(p.date));
       const t0 = Math.min(...t), t1 = Math.max(...t);
+      const span = inner - 2 * X_INSET;
       const xAt = (v) => (t1 === t0 ? PAD_L + inner / 2
-                                    : PAD_L + ((v - t0) / (t1 - t0)) * inner);
+                                    : PAD_L + X_INSET + ((v - t0) / (t1 - t0)) * span);
       xs = t.map(xAt);
+      const lastIdx = pts.length - 1;
 
       show.forEach((m, panel) => {
         const top = panel * (TITLE_H + PANEL_H + GAP) + TITLE_H;
@@ -176,7 +185,10 @@
         if (lo === hi) { lo -= 1; hi += 1; }          // a flat series still needs a band
         const tv = ticks(lo, hi);
         lo = Math.min(lo, ...tv); hi = Math.max(hi, ...tv);
-        const yAt = (v) => top + PANEL_H - ((v - lo) / (hi - lo)) * PANEL_H;
+        // the band is inset top and bottom, so a point at the series max or min
+        // sits inside the panel rather than on its edge
+        const plotH = PANEL_H - 2 * Y_INSET;
+        const yAt = (v) => top + Y_INSET + plotH - ((v - lo) / (hi - lo)) * plotH;
 
         // hairline solid gridlines, one step off the surface
         for (const v of tv) {
@@ -210,9 +222,29 @@
         });
         flush();
 
+        // a left rule, so the series reads against an axis rather than floating
+        g.append(svg('line', {
+          x1: PAD_L, x2: PAD_L, y1: top, y2: top + PANEL_H, class: 'hf-axis',
+        }));
+
         vals.forEach((v, i) => {
           if (v === null || v === undefined) return;
-          g.append(svg('circle', { cx: xs[i], cy: yAt(v), r: R, class: 'hf-dot' }));
+          // the most recent run is the one being asked about, so it gets a
+          // larger marker and the value beside it -- selective direct labelling
+          // rather than a number on every point
+          const latest = i === lastIdx;
+          g.append(svg('circle', {
+            cx: xs[i], cy: yAt(v), r: latest ? R + 1.5 : R,
+            class: latest ? 'hf-dot hf-dot-last' : 'hf-dot',
+          }));
+          if (latest) {
+            const lab = svg('text', {
+              x: xs[i] - R - 5, y: yAt(v) + 4, class: 'hf-last', 'text-anchor': 'end',
+            });
+            lab.textContent = m.name === 'place' && pts[i].place_text !== null
+              ? pts[i].place_text : fmt(v);
+            g.append(lab);
+          }
         });
       });
 
