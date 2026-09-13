@@ -21,12 +21,21 @@ Re-running is safe: a file already recorded in `loaded_files` is skipped, so
 the normal workflow is to run rbd_results.py to fetch new days and then run
 this with no arguments. --force reloads files that are already in.
 
+    python rbd_import.py --prerace            # every card day not yet loaded
+    python rbd_import.py --prerace --date 06/09/2026
+
+--prerace works the same way against data/pre-race, skipping card dates
+already in `prerace_form`. It loads one workbook per transaction and steps
+over a file it cannot read, so a batch containing older files of a different
+layout still loads the ones it can.
+
 Why DuckDB: it is free and embedded (no server to run), it reads .xlsx
 natively so there is no pandas/openpyxl dependency in the load path, and it
 is columnar, which suits the aggregate-heavy queries this data is for.
 """
 
 import argparse
+import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -534,6 +543,54 @@ def find_prerace_file(data_dir, day):
     return hits[0]
 
 
+# The DDMMYYYY stamp rbd_prerace.py puts on every file it saves, in either
+# spelling ('Daily - 06092026.xlsx' from a daily run, 'Daily06092026.xlsx' if
+# the archive's own name ever survives). rbd_results.file_day is the sibling of
+# this; kept local so the loader does not have to import the downloader, and so
+# a pre-race file's own date is read the same way find_prerace_file writes it.
+PRERACE_DAY_RE = re.compile(r"(\d{2})(\d{2})(\d{4})")
+
+
+def prerace_day(name):
+    """The card date a pre-race filename is for, or None."""
+    m = PRERACE_DAY_RE.search(name)
+    if not m:
+        return None
+    try:
+        return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    except ValueError:
+        return None
+
+
+def find_prerace_files(data_dir):
+    """Every pre-race workbook under data_dir as (day, path), oldest first.
+
+    A file whose name carries no readable date is skipped: prerace_date is the
+    key the load deletes on, so guessing it -- today, say -- would file one
+    day's card under another and quietly replace it.
+    """
+    out = []
+    for path in sorted(Path(data_dir).rglob("*.xlsx")):
+        day = prerace_day(path.name)
+        if day:
+            out.append((day, path))
+    return sorted(out, key=lambda dp: dp[0])
+
+
+def prerace_days_loaded(con):
+    """The card dates already in prerace_form.
+
+    The pre-race load has no ledger of its own and does not need one: it
+    deletes and re-inserts on prerace_date, so the rows in the table *are* the
+    record of what is loaded, and the two cannot drift apart the way a
+    separate ledger could.
+    """
+    return {
+        r[0] for r in
+        con.execute(f"SELECT DISTINCT prerace_date FROM {PRERACE_TABLE}").fetchall()
+    }
+
+
 def load_prerace(con, path, day):
     """Load one pre-race workbook, replacing anything already held for that day.
 
@@ -598,6 +655,70 @@ def refresh_races(con, day):
     return con.execute(
         f"SELECT count(*) FROM {RACES_TABLE} WHERE race_date = ?", [day]
     ).fetchone()[0]
+
+
+def load_prerace_files(con, args):
+    """The --prerace side of main(). Returns the exit code.
+
+    With no --date or --file this loads every pre-race workbook on disk whose
+    card date is not already in prerace_form, oldest first -- the same
+    "everything not yet loaded" default the results side has, so
+    `rbd_prerace.py backfill` followed by `rbd_import.py --prerace` picks up
+    the lot rather than only the day it happens to be run on.
+
+    One workbook per transaction, and a failure is logged and stepped over
+    rather than ending the run: the archive reaches back to 2020 and the older
+    files do not all have the layout PRERACE_COLUMNS describes, so a batch of
+    them is expected to contain some the loader cannot read. Stopping at the
+    first would mean never reaching the good ones behind it.
+    """
+    if args.file:
+        path = Path(args.file)
+        if not path.exists():
+            raise SystemExit(f"no such file: {args.file}")
+        # the file's own name wins over the clock: tagging an old card with
+        # today's date would file it under the wrong day and replace that day
+        day = parse_date(args.date) if args.date else prerace_day(path.name)
+        if not day:
+            raise SystemExit(
+                f"cannot tell which day {path.name!r} is for -- pass --date")
+        todo = [(day, path)]
+    elif args.date:
+        day = parse_date(args.date)
+        todo = [(day, find_prerace_file(args.prerace_dir, day))]
+    else:
+        found = find_prerace_files(args.prerace_dir)
+        if not found:
+            raise SystemExit(
+                f"no .xlsx files under {args.prerace_dir}"
+                " -- run rbd_prerace.py first")
+        known = prerace_days_loaded(con)
+        todo = [(d, p) for d, p in found if args.force or d not in known]
+        print(f"{len(found)} pre-race file(s) found, {len(todo)} to load")
+
+    total, races_total, failed = 0, 0, []
+    for i, (day, path) in enumerate(todo, 1):
+        try:
+            n, removed, races = load_prerace(con, path, day)
+        except Exception as e:
+            print(f"  [{i}/{len(todo)}] {path.name:<26} FAILED: {e}", file=sys.stderr)
+            failed.append(path.name)
+            continue
+        total += n
+        races_total += races
+        note = f", replaced {removed:,}" if removed else ""
+        print(f"  [{i}/{len(todo)}] {path.name:<26} {n:>7,} rows"
+              f"  {races:>3} races{note}")
+
+    if todo:
+        print(f"\ninserted {total:,} rows and {races_total:,} races"
+              f" from {len(todo) - len(failed)} file(s)")
+    if failed:
+        print(f"{len(failed)} failed: {', '.join(failed[:5])}"
+              f"{' ...' if len(failed) > 5 else ''}", file=sys.stderr)
+        return 1
+    show_prerace_status(con)
+    return 0
 
 
 def find_files(data_dir):
@@ -669,8 +790,9 @@ def main(argv=None):
     ap.add_argument("--rederive", action="store_true",
                     help="recompute the derived columns for rows already loaded and exit")
     ap.add_argument("--prerace", action="store_true",
-                    help="load the pre-race workbook instead of the results files;"
-                         " today's unless --date is given")
+                    help="load pre-race workbooks instead of the results files;"
+                         " every day not already loaded unless --date or --file"
+                         " is given")
     ap.add_argument("--prerace-dir", default=DEFAULT_PRERACE_DIR,
                     help=f"pre-race workbook root (default {DEFAULT_PRERACE_DIR})")
     args = ap.parse_args(argv)
@@ -692,15 +814,7 @@ def main(argv=None):
         return 0
 
     if args.prerace:
-        day = parse_date(args.date) if args.date else date.today()
-        path = Path(args.file) if args.file else find_prerace_file(args.prerace_dir, day)
-        if not path.exists():
-            raise SystemExit(f"no such file: {path}")
-        n, removed, races = load_prerace(con, path, day)
-        note = f" (replaced {removed:,})" if removed else ""
-        print(f"{path.name}: {n:,} rows for {day:%d/%m/%Y}{note} in {PRERACE_TABLE}")
-        print(f"{' ' * len(path.name)}  {races:,} races on the card in {RACES_TABLE}")
-        return 0
+        return load_prerace_files(con, args)
 
     if args.file:
         targets = [Path(args.file)]
