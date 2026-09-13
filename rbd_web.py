@@ -20,6 +20,7 @@ attached. DuckDB does not allow a reader alongside a writer, so close any
 
 import argparse
 import sys
+from datetime import time
 from pathlib import Path
 
 from _venv import use_venv
@@ -48,6 +49,186 @@ MAX_MATCHES = 20_000  # cap on cells returned by one search
 PAGE_MAX = 500
 
 NUMERIC = {"INTEGER", "DOUBLE"}
+
+
+# --------------------------------------------------------- column meanings ---
+#
+# What each column actually means, for the header tooltips. The labels are the
+# source workbook's own headers, and plenty of them ("PRB", "DOB %", "10 B2L",
+# "Tear Weight") say nothing to a reader who has not seen the site's own
+# documentation -- which is the gap these fill.
+#
+# Only columns whose meaning is established appear here. Where the label is
+# site-specific jargon this data cannot settle, there is deliberately no entry
+# and the tooltip falls back to the column name and type: a guessed definition
+# that reads authoritatively is worse than none, because nothing later
+# contradicts it. The ones left out on purpose are DOB % / DOB P/L, the B2L
+# group, the IPL group and Tear Weight.
+#
+# Several of these were confirmed against the data rather than assumed --
+# up_in_trip against each horse's previous distance, days_since_lto against the
+# gap between its runs, prb against (runners - place) / runners.
+COLUMN_DESC = {
+    # identity and the race itself
+    "race_date": "Date the race was run",
+    "race_time": "Scheduled off time",
+    "track": "Racecourse",
+    "track_name": "Racecourse. Suffixed (AW) for all-weather, (IRE) for Ireland",
+    "country": "Country the race was run in",
+    "race_name": "Full name of the race",
+    "race_type": "Category of race, e.g. Other Handicap, Maiden, Handicap Chase",
+    "going": "Ground conditions, e.g. Good, Soft, Standard",
+    "distance": "Race distance in miles and furlongs, e.g. 1m3½f",
+    "distance_furlongs": "Race distance in furlongs, as a number",
+    "class": "Class of race. 1 is the highest",
+    "class_gb": "Class of race, British racing only. 1 is the highest",
+    "runners": "Number of horses that ran",
+    "prize_money": "Prize money for the race",
+    "horse": "Horse's name",
+    "age": "Horse's age in years on the day",
+    "jockey": "Jockey",
+    "trainer": "Trainer",
+    "weight": "Weight carried, stones and pounds",
+    "weight_lbs": "Weight carried, in pounds",
+    "headgear": "Headgear worn. 'None' is recorded literally, not left empty",
+    "stall": "Starting stall number",
+    "stall_draw": "Starting stall number. Empty for races run without stalls",
+    "silk_no": "Racecard number on the jockey's silks",
+    "pace": "The source's pace figure for how the horse is ridden",
+    # result
+    "place": ("Finishing position. Non-numeric where the horse did not finish: "
+              "PU pulled up, F fell, UR unseated rider, BD brought down, "
+              "RR refused to race, SU slipped up, REF refused, DSQ disqualified"),
+    "lto_pos": "Finishing position on its previous run",
+    "win_dist": ("Distance behind the winner, in lengths. Written as gap-[total], "
+                 "where the bracketed figure is the total behind the winner"),
+    "winning_distance": "How far this horse finished behind the winner, in lengths",
+    "winning_time": "The winning time for the race, not this horse's own time",
+    "official_rating": "Official handicap rating",
+    "race_rating": "Rating band the race was open to, e.g. 0-95",
+    # prices
+    "ind_sp": "Industry starting price, as a fraction",
+    "ind_sp_decimal": "Industry starting price as decimal odds, stake included",
+    "industry_sp": "Industry starting price as decimal odds, stake included",
+    "pred_isp": "The source's predicted industry starting price",
+    "sp_fav": "Rank in the market by starting price. 1 is the favourite",
+    "bsp": "Betfair starting price",
+    "betfair_sp": "Betfair starting price",
+    "bfsp_rank": "Rank in the market by Betfair starting price. 1 is the shortest",
+    "bf_rank": "Rank in the market by Betfair price. 1 is the shortest",
+    "min_price": "Lowest price traded on Betfair",
+    "max_price": "Highest price traded on Betfair",
+    "ip_min": "Lowest price traded in running",
+    "ip_max": "Highest price traded in running",
+    "last_traded_price": "Last price traded on Betfair",
+    "price_15min": "Betfair price 15 minutes before the off",
+    "price_10min": "Betfair price 10 minutes before the off",
+    "price_5min": "Betfair price 5 minutes before the off",
+    "price_3min": "Betfair price 3 minutes before the off",
+    "price_2min": "Betfair price 2 minutes before the off",
+    "price_1min": "Betfair price 1 minute before the off",
+    "price_post_time": "Betfair price at the off",
+    # market movement
+    "pct_sp_drop": "Percentage the price shortened before the off",
+    "pct_sp_incr": "Percentage the price drifted before the off",
+    "lto_pct_sp_drop": "Percentage the price shortened on its previous run",
+    "lto2_pct_sp_drop": "Percentage the price shortened two runs ago",
+    "lto3_pct_sp_drop": "Percentage the price shortened three runs ago",
+    "lto4_pct_sp_drop": "Percentage the price shortened four runs ago",
+    "lto5_pct_sp_drop": "Percentage the price shortened five runs ago",
+    "avg_pct_sp_drop_l5": "Average price shortening over its last five runs",
+    "avg_pct_sp_drop_18mo": "Average price shortening over the last 18 months",
+    "tick_drop": "Price movement in Betfair ticks, negative for a drift",
+    "tick_drop_ir": "Price movement in Betfair ticks in running",
+    "tick_incr_ir": "Price drift in Betfair ticks in running",
+    # record
+    "prev_races": "Races the horse has run before this one",
+    "runs_last_18mo": "Races the horse has run in the last 18 months",
+    "wins_l5": "Wins in its last five runs",
+    "course_wins": "Wins at this course",
+    "distance_wins": "Wins at this distance",
+    "class_wins": "Wins in this class",
+    "going_wins": "Wins on this going",
+    "course_winner": "Whether the horse has won at this course",
+    "distance_winner": "Whether the horse has won at this distance",
+    "prb": "Percentage of rivals beaten. 100 means it won, 0 means it finished last",
+    "prb_to_date": "Percentage of rivals beaten across its career to that point",
+    "days_since_lto": "Days since its previous run",
+    "up_in_trip": "Whether this race is further than its previous run",
+    # RBD is the source site's own initials. Sparse -- about 6% of rows carry it
+    "rbd_rating": "racing-bet-data's own rating. Only present on a minority of rows",
+    "rbd_rank": "Rank in the race by RBD Rating, where that rating is present",
+    "class_diff_lto": "Change in class since its previous run",
+    "or_diff_lto": "Change in official rating since its previous run",
+    "weight_diff_lto": "Change in weight carried since its previous run, in pounds",
+    # ours, not the workbook's
+    "dist_yds": "Race distance in yards. Derived from Distance on import",
+    "win_dist_len": ("Lengths behind the winner, as a number. 0 for the winner; "
+                     "empty where the horse did not finish"),
+    "one_pnd_win": ("What £1 to win would have returned, stake included. "
+                    "0 if the horse did not win"),
+    "prerace_date": "The card this row was read from -- the morning it was published",
+    "todays_race": "The race on that card this horse was declared for",
+    "filename": "Source workbook this row was loaded from",
+
+    # The race card's computed columns. Their aliases are unique to the card, so
+    # they can live here rather than in a second dictionary. Every one is over
+    # the horse's *previous* races of this race's own type and distance.
+    "one_pnd_invest": ("Total return from £1 to win on this horse in every one of "
+                       "those races. Read against #Races, the notional stake"),
+    "n_races": "Races of this type and distance the horse has run before this one",
+    "n_wins": "How many of those it won",
+    "last_plc": "Finishing position in the most recent of those races",
+    "avg_plc": ("Mean finishing position over those races. Runs where it did not "
+                "finish are counted in #Races but left out of this average"),
+    "med_plc": "Median finishing position over those races",
+    "max_win_dist_len": "Furthest it finished behind the winner in those races, in lengths",
+    "min_win_dist_len": ("Closest it finished to the winner in those races. 0 if it "
+                         "won one of them"),
+    "avg_win_dist_len": "Mean lengths behind the winner over those races",
+    "med_win_dist_len": "Median lengths behind the winner over those races",
+}
+
+# A few names mean different things in the two tables, so the table wins.
+TABLE_DESC = {
+    PRERACE_TABLE: {
+        "race_date": ("Date of the run this row describes. Equal to Card Date on "
+                      "the row for the race the horse is declared in; earlier on "
+                      "its form rows"),
+        "race_time": "Off time of the run this row describes",
+        "place": ("Finishing position of the run this row describes, empty for the "
+                  "race still to be run. Non-numeric where the horse did not "
+                  "finish: PU pulled up, F fell, UR unseated rider, BD brought "
+                  "down, DSQ disqualified"),
+    },
+}
+
+
+def cell(v):
+    """One value as the grid should show it.
+
+    Times lose a zero seconds field: every race time in the data is to the
+    minute, so ":00" is three characters of noise on every row of three
+    tables. Kept only if the seconds are actually set, and still a valid TIME
+    to cast back -- the race-card drill-down passes the displayed time
+    straight to the API.
+    """
+    if v is None:
+        return None
+    if isinstance(v, time) and v.second == 0 and v.microsecond == 0:
+        return f"{v.hour:02d}:{v.minute:02d}"
+    return str(v)
+
+
+def describe(table, col, typ):
+    """The tooltip text for one column: what it means, then what it is.
+
+    Always ends with the column name and type, so the tooltip is useful even
+    where there is no description to give.
+    """
+    desc = TABLE_DESC.get(table, {}).get(col) or COLUMN_DESC.get(col)
+    tail = f"{col} ({typ})"
+    return f"{desc}\n\n{tail}" if desc else tail
 
 
 class Dataset:
@@ -208,6 +389,20 @@ HORSE_METRICS = [
 
 DEFAULT_METRIC = "place"
 
+# What each checkbox plots. Separate from COLUMN_DESC because these are one
+# race's value in a series, where the card's column of the same name is an
+# aggregate over all of them -- "#Races the horse has run" against "the
+# position it finished in this one".
+HORSE_METRIC_DESC = {
+    "place": "Where it finished in each race. Runs it did not finish have no point",
+    "invest": ("What £1 to win returned on each race: the starting price if it won, "
+               "otherwise 0. These are the values the card's £1 invest totals"),
+    "win_dist_len": "How far it finished behind the winner, in lengths. 0 where it won",
+    "industry_sp": "Its starting price each time, so a shortening market falls",
+    "official_rating": "The handicapper's rating at the time of each run",
+    "prb": "Percentage of rivals beaten: 100 means it won, 0 means it finished last",
+}
+
 
 def dataset(request):
     key = request.query_params.get("dataset", "results")
@@ -331,7 +526,8 @@ def api_datasets():
 def api_columns(request: Request):
     ds = dataset(request)
     return {"dataset": ds.key,
-            "columns": [{"name": n, "label": l, "type": t} for n, l, t in ds.meta]}
+            "columns": [{"name": n, "label": l, "type": t,
+                         "desc": describe(ds.table, n, t)} for n, l, t in ds.meta]}
 
 
 # The two data endpoints read the raw query string rather than declaring
@@ -359,7 +555,7 @@ def rows(request: Request):
         "offset": offset,
         "limit": limit,
         "columns": ds.names,
-        "rows": [[None if v is None else str(v) for v in row] for row in data],
+        "rows": [[cell(v) for v in row] for row in data],
     }
 
 
@@ -482,10 +678,12 @@ def racecard(request: Request):
     rows = cur.execute(sql, [day, track, time_, day, track, time_, day]).fetchall()
     return {
         "race": {"date": day, "track": track, "time": time_},
-        "columns": [{"name": c, "label": l, "type": PRERACE_TYPE.get(c, "VARCHAR")}
+        "columns": [{"name": c, "label": l, "type": PRERACE_TYPE.get(c, "VARCHAR"),
+                     "desc": describe(PRERACE_TABLE, c, PRERACE_TYPE.get(c, "VARCHAR"))}
                     for c, l in RACECARD_FIELDS]
-        + [{"name": a, "label": l, "type": t} for a, l, t, _ in RACECARD_STATS],
-        "rows": [[None if v is None else str(v) for v in r] for r in rows],
+        + [{"name": a, "label": l, "type": t, "desc": describe(None, a, t)}
+           for a, l, t, _ in RACECARD_STATS],
+        "rows": [[cell(v) for v in r] for r in rows],
     }
 
 
@@ -541,7 +739,8 @@ def horseform(request: Request):
     return {
         "horse": horse,
         "race": {"date": day, "track": track, "time": time_},
-        "metrics": [{"name": n, "label": l, "better": b}
+        "metrics": [{"name": n, "label": l, "better": b,
+                     "desc": HORSE_METRIC_DESC.get(n, "")}
                     for n, l, b, _ in HORSE_METRICS],
         "default": DEFAULT_METRIC,
         "points": [
