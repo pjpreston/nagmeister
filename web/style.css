@@ -345,32 +345,74 @@ tbody tr.selected > td:first-child {
  *
  * The panel beside the Races table. Colours come from the theme tokens, so it
  * follows all 13 themes like everything else.
+ *
+ * Three things the layout has to get right, all of them about the row it
+ * shares with the table:
+ *
+ *   - the table takes only the width its columns need, so the panel begins
+ *     immediately to its right with no strip of empty table between them;
+ *   - the panel takes everything left over, out to the window edge;
+ *   - the panel never makes the row taller than the table. Its height is
+ *     whatever the table's is, and the transcript scrolls inside that.
  */
 .with-chat { display: flex; align-items: stretch; gap: 0; min-width: 0; }
-/* Specific enough to beat `.panel.compact .tablewrap { flex: none }`, which is
-   there to stop the table filling the viewport *vertically*. Inside this row
-   flex governs width, so without this the table sizes to its content and
-   leaves dead space between it and the chat. The compact max-height still
-   applies, so the row stays about ten rows tall. */
+
+/* Size to content, not to the space available. `flex: 1` here stretched the
+   table past its last column and left a gap before the panel; the compact
+   rule below already stops it growing vertically, and this stops it growing
+   sideways. The tablewrap keeps its own overflow, so a table wider than the
+   row still scrolls. */
 .panel.compact .with-chat > .tablewrap,
-.with-chat > .tablewrap { flex: 1 1 auto; min-width: 0; }
+.with-chat > .tablewrap { flex: 0 1 auto; min-width: 0; }
 
+/* Takes the remainder, out to the right-hand edge. overflow:hidden is what
+   holds it to the table's height -- without it the transcript and the form
+   set the row height between them and the panel hangs below the table. */
 .chat {
-  flex: 0 0 380px; display: flex; flex-direction: column; min-width: 0;
+  flex: 1 1 auto; min-width: 0; overflow: hidden;
+  display: flex; flex-direction: column;
   border-left: 1px solid var(--line); background: var(--head);
-  padding: 10px 12px; gap: 8px;
+  padding: 8px 10px; gap: 6px;
 }
-.chat-pick {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 12px; font-weight: 600; color: var(--muted);
-}
-.chat-pick select { flex: 1; min-width: 0; }
 
-/* Fixed height so the transcript scrolls rather than pushing the race card
-   further down the page every time an answer arrives. */
+/* What the chat will take "this race" to mean. Shown once for all the tabs,
+   because it is the same race for each and four copies would cost height the
+   table has not got. */
+.chat-ctx {
+  flex: none; font-size: 11px; color: var(--fg); font-weight: 600;
+  padding: 3px 7px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--line);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-ctx-none { font-weight: 400; color: var(--muted); }
+
+/* One tab per configured model. */
+.chat-tabs { flex: none; display: flex; gap: 4px; flex-wrap: wrap; }
+.chat-tab {
+  padding: 3px 10px; border: 1px solid transparent; border-radius: 6px;
+  background: none; color: var(--muted); font-weight: 600; font-size: 12px;
+}
+.chat-tab:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.chat-tab[aria-selected="true"] {
+  color: var(--bg); background: var(--brand); border-color: var(--brand);
+}
+.chat-tab[aria-selected="true"]:hover { background: var(--brand-hi); color: var(--bg); }
+/* a model with no key is still offered -- it just says why it cannot answer */
+.chat-tab-nokey { opacity: 0.55; }
+.chat-tab-nokey::after { content: " ·"; }
+/* an answer still coming on a tab you have switched away from */
+.chat-tab-busy::after { content: " …"; }
+
+/* min-height:0 on both is what lets the transcript shrink instead of pushing
+   the panel past the table's height. */
+.chat-panes { flex: 1 1 0; min-height: 0; display: flex; }
+.chat-pane { flex: 1 1 auto; min-width: 0; min-height: 0;
+             display: flex; flex-direction: column; gap: 6px; }
+.chat-pane[hidden] { display: none; }
+
 .chat-log {
-  flex: 1 1 auto; min-height: 220px; max-height: 42vh; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 8px;
+  flex: 1 1 0; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 7px;
   font-size: 13px; line-height: 1.45;
 }
 .chat-msg { display: flex; flex-direction: column; gap: 2px; }
@@ -380,21 +422,21 @@ tbody tr.selected > td:first-child {
 .chat-text p:last-child { margin-bottom: 0; }
 .chat-user .chat-text {
   background: var(--bg); border: 1px solid var(--line);
-  border-radius: 8px; padding: 6px 9px;
+  border-radius: 8px; padding: 5px 8px;
 }
 .chat-error .chat-who { color: var(--warn-fg); }
 .chat-error .chat-text {
   background: var(--warn-bg); color: var(--warn-fg);
-  border: 1px solid var(--warn-line); border-radius: 8px; padding: 6px 9px;
+  border: 1px solid var(--warn-line); border-radius: 8px; padding: 5px 8px;
 }
-/* which tools the answer actually read -- the difference between an answer
-   from the database and one from the model's memory */
+/* which tools the answer read, and which sites -- the difference between an
+   answer from the database and one that also went out to the market */
 .chat-meta { font-size: 11px; color: var(--muted); font-style: italic; }
 
-.chat-form { display: flex; flex-direction: column; gap: 6px; }
+.chat-form { flex: none; display: flex; flex-direction: column; gap: 5px; }
 .chat-in {
-  width: 100%; resize: vertical; font: inherit; font-size: 13px;
-  padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px;
+  width: 100%; resize: none; font: inherit; font-size: 13px;
+  padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px;
   background: var(--bg); color: var(--fg);
 }
 .chat-in:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -406,20 +448,13 @@ tbody tr.selected > td:first-child {
 .chat-note { font-size: 11px; }
 
 /* Below this the two-column split leaves the table too narrow to read, so the
-   chat drops under it instead. */
+   chat drops under it and is given a height of its own. */
 @media (max-width: 1100px) {
   .with-chat { flex-direction: column; }
+  .panel.compact .with-chat > .tablewrap,
+  .with-chat > .tablewrap { flex: none; }
   .chat {
-    flex: 1 1 auto; border-left: 0; border-top: 1px solid var(--line);
+    flex: none; height: 340px;
+    border-left: 0; border-top: 1px solid var(--line);
   }
-  .chat-log { max-height: 320px; }
 }
-
-/* What the chat will take "this race" to mean. Shown because the model is
-   about to assume it. */
-.chat-ctx {
-  font-size: 11px; color: var(--fg); font-weight: 600;
-  padding: 4px 7px; border-radius: 6px;
-  background: var(--bg); border: 1px solid var(--line);
-}
-.chat-ctx-none { font-weight: 400; color: var(--muted); }

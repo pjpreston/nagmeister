@@ -147,20 +147,12 @@
 </template>
 
 <template id="chattpl">
+  <!-- One tab and one conversation per configured model; chat.js builds them
+       from /api/models, so a model added there appears here with no markup. -->
   <aside class="chat" aria-label="AI chat">
-    <label class="chat-pick">AI models
-      <select class="chat-model"></select>
-    </label>
-    <div class="chat-log" role="log" aria-live="polite"></div>
-    <form class="chat-form">
-      <textarea class="chat-in" rows="3" spellcheck="false"
-                placeholder="Ask about a race, a horse, or who the form favours…"></textarea>
-      <div class="chat-bar">
-        <button type="submit" class="chat-send">Ask</button>
-        <button type="button" class="chat-reset ghost" title="Clear the conversation">Clear</button>
-        <span class="chat-note hint"></span>
-      </div>
-    </form>
+    <div class="chat-ctx"></div>
+    <div class="chat-tabs" role="tablist" aria-label="AI models"></div>
+    <div class="chat-panes"></div>
   </aside>
 </template>
 

@@ -1,11 +1,16 @@
 'use strict';
 
-// The AI panel beside the Races table.
+// The AI panel beside the Races table: a tab per configured model, each with
+// its own conversation.
 //
-// It owns the model dropdown, the transcript and the box you type in. It does
-// not own an API key: the page posts a question to /api/chat and gets prose
-// back, and the keys live in the server process only. Nothing here knows which
-// vendor answered beyond the label in the dropdown.
+// The conversations are genuinely separate. Asking Gemini something does not
+// put it in Claude's history, so the tabs are four independent readings of the
+// same race rather than one thread passed between models -- which is the point
+// of having four, and also the only honest arrangement, since none of these
+// vendors will accept another's reasoning blocks in a history anyway.
+//
+// The panel does not own an API key: it posts a question to /api/chat and gets
+// prose back. Keys live in the server process only.
 //
 // The whole thread goes up on every turn, because none of the vendor APIs are
 // stateful. That is also why Clear is a real feature rather than a nicety --
@@ -17,31 +22,19 @@
 (function () {
   const MAX_TURNS = 40;   // matches the server's cap, so we fail here not there
 
-  // `getContext` is supplied by the grid: it returns what the user has
-  // selected on the tab, so a question can say "this race" and mean it.
   window.nmChat = function mount(root, getContext) {
-    const pick = root.querySelector('.chat-model');
-    const log = root.querySelector('.chat-log');
-    const form = root.querySelector('.chat-form');
-    const input = root.querySelector('.chat-in');
-    const send = root.querySelector('.chat-send');
-    const reset = root.querySelector('.chat-reset');
-    const note = root.querySelector('.chat-note');
-
-    let history = [];       // [{role, content}], what gets posted
-    let busy = false;
+    const ctxLine = root.querySelector('.chat-ctx');
+    const tabs = root.querySelector('.chat-tabs');
+    const panes = root.querySelector('.chat-panes');
     let models = [];
-
-    // Shown above the transcript, because the model is about to assume it and
-    // the user should be able to see what "this race" resolves to.
-    const ctxLine = document.createElement('div');
-    ctxLine.className = 'chat-ctx';
-    root.querySelector('.chat-log').before(ctxLine);
+    const convos = new Map();   // model key -> conversation
 
     function context() {
       return (getContext ? getContext() : null) || {};
     }
 
+    // Shown once, above the tabs: it is the same race for every model, and
+    // four copies of it would just cost height the table has not got.
     function showContext() {
       const c = context();
       ctxLine.textContent = c.date
@@ -50,121 +43,165 @@
       ctxLine.classList.toggle('chat-ctx-none', !c.date);
     }
 
-    function say(role, text, meta) {
-      const wrap = document.createElement('div');
-      wrap.className = 'chat-msg chat-' + role;
-      const who = document.createElement('div');
-      who.className = 'chat-who';
-      who.textContent = role === 'user' ? 'You'
-        : role === 'error' ? 'Error'
-        : (models.find((m) => m.key === pick.value) || {}).label || 'AI';
-      const body = document.createElement('div');
-      body.className = 'chat-text';
-      // paragraph per blank line; the models are asked for short prose, and
-      // this keeps their line breaks without interpreting any markup
-      for (const para of text.split(/\n{2,}/)) {
-        const p = document.createElement('p');
-        p.textContent = para.replace(/\n/g, ' ');
-        body.append(p);
-      }
-      wrap.append(who, body);
-      if (meta) {
-        const m = document.createElement('div');
-        m.className = 'chat-meta';
-        m.textContent = meta;
-        wrap.append(m);
-      }
-      log.append(wrap);
-      log.scrollTop = log.scrollHeight;
-      return wrap;
-    }
+    /** One model's tab, transcript and question box. */
+    function makeConvo(model) {
+      const pane = document.createElement('div');
+      pane.className = 'chat-pane';
+      pane.id = `chat-pane-${model.key.replace(/\W/g, '-')}`;
+      pane.setAttribute('role', 'tabpanel');
+      pane.hidden = true;
 
-    function setBusy(on, label) {
-      busy = on;
-      send.disabled = on;
-      input.disabled = on;
-      send.textContent = on ? 'Thinking…' : 'Ask';
-      note.textContent = on ? (label || '') : '';
-    }
+      const log = document.createElement('div');
+      log.className = 'chat-log';
+      log.setAttribute('role', 'log');
+      log.setAttribute('aria-live', 'polite');
 
-    /** The selected model's key is missing, so say which one and stop. */
-    function readiness() {
-      const m = models.find((x) => x.key === pick.value);
-      if (m && !m.ready) {
-        note.textContent = `needs ${m.env}`;
-        return false;
+      const form = document.createElement('form');
+      form.className = 'chat-form';
+      const input = document.createElement('textarea');
+      input.className = 'chat-in';
+      input.rows = 2;
+      input.spellcheck = false;
+      input.placeholder = model.ready
+        ? 'Ask about this race…'
+        : `Set ${model.env} to use ${model.label}`;
+      const bar = document.createElement('div');
+      bar.className = 'chat-bar';
+      const send = document.createElement('button');
+      send.type = 'submit';
+      send.className = 'chat-send';
+      send.textContent = 'Ask';
+      const clear = document.createElement('button');
+      clear.type = 'button';
+      clear.className = 'chat-reset ghost';
+      clear.title = 'Clear this conversation';
+      clear.textContent = 'Clear';
+      const note = document.createElement('span');
+      note.className = 'chat-note hint';
+      bar.append(send, clear, note);
+      form.append(input, bar);
+      pane.append(log, form);
+      panes.append(pane);
+
+      const tab = document.createElement('button');
+      tab.type = 'button';
+      tab.className = 'chat-tab';
+      tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-selected', 'false');
+      tab.setAttribute('aria-controls', pane.id);
+      tab.textContent = model.label;
+      tab.title = `${model.label} — ${model.model}\nNeeds ${model.env}`
+        + (model.ready ? '' : '\n\nNo key set');
+      if (!model.ready) tab.classList.add('chat-tab-nokey');
+      tab.onclick = () => select(model.key);
+      tabs.append(tab);
+
+      let history = [];
+      let busy = false;
+
+      function say(role, text, meta) {
+        const wrap = document.createElement('div');
+        wrap.className = 'chat-msg chat-' + role;
+        const who = document.createElement('div');
+        who.className = 'chat-who';
+        who.textContent = role === 'user' ? 'You'
+          : role === 'error' ? 'Error' : model.label;
+        const body = document.createElement('div');
+        body.className = 'chat-text';
+        for (const para of text.split(/\n{2,}/)) {
+          const p = document.createElement('p');
+          p.textContent = para.replace(/\n/g, ' ');
+          body.append(p);
+        }
+        wrap.append(who, body);
+        if (meta) {
+          const m = document.createElement('div');
+          m.className = 'chat-meta';
+          m.textContent = meta;
+          wrap.append(m);
+        }
+        log.append(wrap);
+        log.scrollTop = log.scrollHeight;
       }
-      note.textContent = '';
-      return true;
-    }
 
-    async function ask(question) {
-      history.push({ role: 'user', content: question });
-      say('user', question);
-      setBusy(true, 'reading the database…');
-      try {
-        const res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: pick.value, messages: history,
-                                 context: context() }),
-        });
-        const body = await res.json().catch(() => ({ error: res.statusText }));
-        if (!res.ok) throw new Error(body.error || 'request failed');
-        history.push({ role: 'assistant', content: body.reply });
-        // Two provenance lines, because they answer different questions: which
-        // of our tables it read, and whether it went outside them. Web search
-        // runs on the vendor's side, so without this the reader cannot tell a
-        // database-only answer from one that also checked the market.
-        const used = [...new Set(body.tools_used || [])];
-        const web = [...new Set(body.sources || [])];
-        const meta = [
-          used.length ? 'read: ' + used.join(', ') : null,
-          web.length ? 'web: ' + web.join(', ') : null,
-        ].filter(Boolean).join('  ·  ');
-        say('assistant', body.reply, meta || null);
-      } catch (e) {
-        // the failed turn is dropped, so a retry does not resend it
-        history.pop();
-        say('error', e.message);
-      } finally {
-        setBusy(false);
-        readiness();
+      function setBusy(on) {
+        busy = on;
+        send.disabled = on || !model.ready;
+        input.disabled = on || !model.ready;
+        send.textContent = on ? 'Thinking…' : 'Ask';
+        note.textContent = on ? 'reading the data and the web…'
+                              : (model.ready ? '' : `needs ${model.env}`);
+        // a tab whose answer is still coming says so, since you can switch away
+        tab.classList.toggle('chat-tab-busy', on);
       }
-    }
 
-    form.onsubmit = (ev) => {
-      ev.preventDefault();
-      const q = input.value.trim();
-      if (!q || busy) return;
-      if (!readiness()) return;
-      if (history.length >= MAX_TURNS) {
-        say('error', 'This conversation is long enough to be expensive to re-send. '
-                   + 'Clear it and start again.');
-        return;
+      async function ask(question) {
+        history.push({ role: 'user', content: question });
+        say('user', question);
+        setBusy(true);
+        try {
+          const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: model.key, messages: history,
+                                   context: context() }),
+          });
+          const body = await res.json().catch(() => ({ error: res.statusText }));
+          if (!res.ok) throw new Error(body.error || 'request failed');
+          history.push({ role: 'assistant', content: body.reply });
+          // two provenance lines: which of our tables it read, and whether it
+          // went outside them. Web search runs vendor-side, so without this a
+          // database-only answer looks identical to one that checked the market
+          const used = [...new Set(body.tools_used || [])];
+          const web = [...new Set(body.sources || [])];
+          say('assistant', body.reply, [
+            used.length ? 'read: ' + used.join(', ') : null,
+            web.length ? 'web: ' + web.join(', ') : null,
+          ].filter(Boolean).join('  ·  ') || null);
+        } catch (e) {
+          history.pop();      // drop the failed turn so a retry does not resend it
+          say('error', e.message);
+        } finally {
+          setBusy(false);
+        }
       }
-      input.value = '';
-      ask(q);
-    };
 
-    // Enter sends, Shift+Enter for a newline -- the box is multi-line because
-    // a form question can be long, but sending is the common case
-    input.onkeydown = (ev) => {
-      if (ev.key === 'Enter' && !ev.shiftKey) {
+      form.onsubmit = (ev) => {
         ev.preventDefault();
-        form.requestSubmit();
+        const q = input.value.trim();
+        if (!q || busy || !model.ready) return;
+        if (history.length >= MAX_TURNS) {
+          say('error', 'This conversation is long enough to be expensive to '
+                     + 're-send. Clear it and start again.');
+          return;
+        }
+        input.value = '';
+        ask(q);
+      };
+
+      // Enter sends, Shift+Enter for a newline
+      input.onkeydown = (ev) => {
+        if (ev.key === 'Enter' && !ev.shiftKey) {
+          ev.preventDefault();
+          form.requestSubmit();
+        }
+      };
+
+      clear.onclick = () => { history = []; log.textContent = ''; input.focus(); };
+
+      setBusy(false);
+      return { model, tab, pane, input, focus: () => input.focus() };
+    }
+
+    function select(key) {
+      for (const [k, c] of convos) {
+        const on = k === key;
+        c.pane.hidden = !on;
+        c.tab.setAttribute('aria-selected', on ? 'true' : 'false');
       }
-    };
-
-    reset.onclick = () => {
-      history = [];
-      log.textContent = '';
-      readiness();
-      showContext();
-      input.focus();
-    };
-
-    pick.onchange = readiness;
+      const c = convos.get(key);
+      if (c && c.model.ready) c.focus();
+    }
 
     return {
       /** Called by the grid whenever the selected race or runner changes. */
@@ -173,21 +210,17 @@
         try {
           const d = await getJSON('/api/models');
           models = d.models;
-          pick.textContent = '';
-          for (const m of models) {
-            const o = document.createElement('option');
-            o.value = m.key;
-            // the model id is in the tooltip, not the label: the label is the
-            // ticket's wording and should stay stable as ids move on
-            o.textContent = m.label + (m.ready ? '' : ' (no key)');
-            o.title = `${m.label} — ${m.model}\nNeeds ${m.env}`;
-            pick.append(o);
-          }
-          pick.value = d.default;
-          readiness();
+          tabs.textContent = '';
+          panes.textContent = '';
+          convos.clear();
+          for (const m of models) convos.set(m.key, makeConvo(m));
+          // open on the configured default, or the first model with a key
+          const first = convos.has(d.default) ? d.default
+            : (models.find((m) => m.ready) || models[0] || {}).key;
+          if (first) select(first);
           showContext();
         } catch (e) {
-          note.textContent = e.message;
+          ctxLine.textContent = e.message;
         }
       },
     };

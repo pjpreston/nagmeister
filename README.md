@@ -587,10 +587,11 @@ so these endpoints cannot drift from the schema the UI shows.
 
 ## Asking an AI about the racing
 
-The **Races** tab carries a chat panel beside its table: pick a model, ask a
-question, and it answers from the database and the web.
+The **Races** tab carries a chat panel beside its table: one tab per
+configured model, each with its own conversation, answering from the database
+and the web.
 
-| Dropdown | Model |
+| Tab | Model |
 | --- | --- |
 | Anthropic/Claude | `claude-opus-5` |
 | **Anthropic/Sonnet** | `claude-sonnet-5` — the default |
@@ -607,9 +608,25 @@ export GOOGLE_API_KEY=...      # Gemini
 
 The page posts a question to `/api/chat` and gets prose back. It is never given
 a key and never calls a vendor itself, so nothing leaks through the JavaScript.
-A model whose key is absent is listed as `(no key)` and names the variable it
-wants — `/api/models` reports readiness, so the panel can say so before a
-question is typed rather than after.
+A model whose key is absent still gets a tab — dimmed, and its question box
+names the variable it wants. `/api/models` reports readiness, so the panel says
+so before a question is typed rather than after.
+
+**The conversations are separate.** Asking Gemini something does not put it in
+Claude's history, so the tabs are four independent readings of the same race
+rather than one thread handed between models — which is the point of having
+four, and the only workable arrangement anyway, since no vendor will accept
+another's reasoning blocks in a history.
+
+The panel is sized to the table it sits beside: the table takes only the width
+its columns need so the panel starts flush against it, the panel takes the rest
+out to the window edge, and its height is the table's, with the transcript
+scrolling inside. Below 1100px the two-column split leaves the table unreadable,
+so the panel drops underneath with a height of its own.
+
+The selected race is shown once above the tabs rather than per tab — it is the
+same race for every model, and four copies would cost height the table has not
+got.
 
 ### What the model can see
 
