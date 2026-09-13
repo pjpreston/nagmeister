@@ -112,9 +112,17 @@
         const body = await res.json().catch(() => ({ error: res.statusText }));
         if (!res.ok) throw new Error(body.error || 'request failed');
         history.push({ role: 'assistant', content: body.reply });
-        const used = (body.tools_used || []);
-        say('assistant', body.reply,
-            used.length ? 'read: ' + [...new Set(used)].join(', ') : null);
+        // Two provenance lines, because they answer different questions: which
+        // of our tables it read, and whether it went outside them. Web search
+        // runs on the vendor's side, so without this the reader cannot tell a
+        // database-only answer from one that also checked the market.
+        const used = [...new Set(body.tools_used || [])];
+        const web = [...new Set(body.sources || [])];
+        const meta = [
+          used.length ? 'read: ' + used.join(', ') : null,
+          web.length ? 'web: ' + web.join(', ') : null,
+        ].filter(Boolean).join('  ·  ');
+        say('assistant', body.reply, meta || null);
       } catch (e) {
         // the failed turn is dropped, so a retry does not resend it
         history.pop();

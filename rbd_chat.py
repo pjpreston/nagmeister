@@ -83,6 +83,14 @@ class ChatError(Exception):
     """Something the user should be told in prose rather than a stack trace."""
 
 
+def _domain(url):
+    """example.com from a URL, or "" -- for naming a source compactly."""
+    if not isinstance(url, str):
+        return ""
+    rest = url.split("://", 1)[-1].split("/", 1)[0].split("?", 1)[0]
+    return rest[4:] if rest.startswith("www.") else rest
+
+
 # ------------------------------------------------------------------- tools ---
 #
 # One definition per tool, in a neutral shape, translated per vendor below.
@@ -257,8 +265,21 @@ runs at the trip is a smaller sample than one with thirty, and saying so is \
 more useful than a confident number. If the data does not support an answer, \
 say what is missing rather than filling the gap.
 
-You can search the web for things the database does not hold -- today's prices \
-at the bookmakers, non-runners, going changes, news. Cite what you used.
+Search the web as well, and do it before you commit to a selection rather than \
+only when the database comes up short. The database is a form book: it knows \
+what has happened, and nothing about what has changed since. Look for the \
+things that would move your answer -- the current market at the bookmakers \
+(Betfair, William Hill, Ladbrokes), non-runners and withdrawals, going and \
+ground changes, jockey bookings, stable news, and what other analysts are \
+saying about the race.
+
+Then weigh the two against each other rather than reporting them separately. \
+Say where the record and the market agree, and say so plainly where they \
+disagree -- a horse the figures like but the market has drifted is a more \
+useful observation than either fact alone, and so is the reverse. If the web \
+adds nothing you could find, say that too.
+
+Name the sources you used, with the site, so a reader can go and check.
 
 Racing is not predictable and nothing here is a guarantee or financial advice. \
 Say so once if you are asked for a selection; do not repeat it in every reply.
@@ -309,7 +330,25 @@ def _anthropic_tools():
             for t in TOOLS]
 
 
-def chat_anthropic(model_id, history, call, system):
+def _anthropic_sources(content, sources):
+    """Record the sites a web_search_tool_result block cites.
+
+    Web search runs Anthropic-side, so it never reaches `call` and would be
+    invisible without this -- the reader could not tell a database answer from
+    one that also went out to the bookmakers.
+    """
+    for b in content:
+        if getattr(b, "type", None) != "web_search_tool_result":
+            continue
+        body = getattr(b, "content", None)
+        # an error comes back as a single object where a success is a list
+        for item in (body if isinstance(body, list) else []):
+            d = _domain(getattr(item, "url", "") or "")
+            if d and d not in sources:
+                sources.append(d)
+
+
+def chat_anthropic(model_id, history, call, system, sources):
     import anthropic
 
     client = anthropic.Anthropic()
@@ -346,6 +385,7 @@ def chat_anthropic(model_id, history, call, system):
         if r.stop_reason == "refusal":
             raise ChatError("The model declined to answer that.")
 
+        _anthropic_sources(r.content, sources)
         calls = [b for b in r.content if b.type == "tool_use"]
         if not calls:
             return "".join(b.text for b in r.content if b.type == "text").strip()
@@ -364,8 +404,9 @@ def chat_anthropic(model_id, history, call, system):
 
 # ------------------------------------------------------------------ openai ---
 
-def chat_openai(model_id, history, call, system):
+def chat_openai(model_id, history, call, system, sources):
     key = os.environ["OPENAI_API_KEY"]
+    searched = [False]      # a web_search_call ran, even if it named no site
     tools = [{"type": "web_search"}] + [
         {"type": "function", "name": t["name"], "description": t["description"],
          "parameters": {"type": "object", "properties": t["properties"],
@@ -385,8 +426,21 @@ def chat_openai(model_id, history, call, system):
             raise ChatError(f"OpenAI: {body['error'].get('message', r.status_code)}")
 
         out = [o for o in (body.get("output") or []) if o]
+        for o in out:
+            if o.get("type") == "web_search_call":
+                # records that a search ran, but not where. The annotations
+                # below name the sites when the answer cites them; reply()
+                # falls back to a bare "web" only if none turn up.
+                searched[0] = True
+            for cc in (o.get("content") or []):
+                for a in (cc.get("annotations") or []) if isinstance(cc, dict) else []:
+                    d = _domain(a.get("url", ""))
+                    if d and d not in sources:
+                        sources.append(d)
         calls = [o for o in out if o.get("type") == "function_call"]
         if not calls:
+            if searched[0] and not sources:
+                sources.append("web (sites not named by the model)")
             text = "".join(
                 c.get("text", "") for o in out if o.get("type") == "message"
                 for c in (o.get("content") or []))
@@ -415,7 +469,7 @@ def chat_openai(model_id, history, call, system):
 
 # ------------------------------------------------------------------ gemini ---
 
-def chat_google(model_id, history, call, system):
+def chat_google(model_id, history, call, system, sources):
     key = os.environ["GOOGLE_API_KEY"]
     url = ("https://generativelanguage.googleapis.com/v1beta/models/"
            f"{model_id}:generateContent")
@@ -449,6 +503,15 @@ def chat_google(model_id, history, call, system):
             raise ChatError("Gemini returned no answer"
                             f" ({body.get('promptFeedback', 'no reason given')}).")
 
+        # The chunk's `uri` is a vertexaisearch.cloud.google.com redirect, so
+        # it names Google rather than the source. `title` carries the real
+        # site -- "oddschecker.com" -- which is what a reader wants.
+        for ch in ((cands[0].get("groundingMetadata") or {})
+                   .get("groundingChunks") or []):
+            w = (ch or {}).get("web") or {}
+            d = _domain(w.get("title") or "") or _domain(w.get("uri") or "")
+            if d and d not in sources:
+                sources.append(d)
         content = cands[0].get("content") or {}
         parts = content.get("parts") or []
         calls = [p["functionCall"] for p in parts if "functionCall" in p]
@@ -475,7 +538,7 @@ DRIVERS = {"anthropic": chat_anthropic, "openai": chat_openai,
 
 
 def reply(model_key, history, web, context=None):
-    """Answer the last message in `history`. Returns (text, tools_used).
+    """Answer the last message in `history`. Returns (text, tools_used, sources).
 
     `web` is the rbd_web module the server is actually running -- see run_tool
     for why it is passed rather than imported.
@@ -495,7 +558,7 @@ def reply(model_key, history, web, context=None):
             f"{label} needs {env} set in the environment. Add it to setenv.rc "
             "and restart the server.")
 
-    used = []
+    used, sources = [], []
 
     def call(name, args):
         # Past the budget, answer the tool with a refusal rather than raising:
@@ -509,7 +572,8 @@ def reply(model_key, history, web, context=None):
         used.append(name)
         return run_tool(web, name, args)
 
-    text = DRIVERS[vendor](model_id, history, call, build_system(context))
+    text = DRIVERS[vendor](model_id, history, call, build_system(context),
+                           sources)
     if not text:
         raise ChatError(f"{label} returned an empty answer.")
-    return text, used
+    return text, used, sources

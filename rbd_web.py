@@ -947,12 +947,13 @@ async def api_chat(request: Request):
 
     try:
         # the vendor call blocks, so keep it off the event loop
-        text, used = await run_in_threadpool(
+        text, used, sources = await run_in_threadpool(
             rbd_chat.reply, model, history, sys.modules[__name__], context)
     except rbd_chat.ChatError as e:
         raise HTTPException(502, str(e))
 
-    return {"model": model, "reply": text, "tools_used": used}
+    return {"model": model, "reply": text, "tools_used": used,
+            "sources": sources}
 
 
 @app.get("/api/stats")
