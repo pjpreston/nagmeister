@@ -72,7 +72,10 @@ function createGrid(root, ds) {
       const btn = document.createElement('button');
       btn.className = 'hdr';
       btn.dataset.col = col.name;
-      btn.title = `${col.name} (${col.type}) — click to sort`;
+      // the server explains what the column means; this only adds the
+      // interaction, so a column with no description still says what it is
+      btn.title = `${col.label}\n\n${col.desc || `${col.name} (${col.type})`}`
+        + '\n\nClick to sort';
       btn.innerHTML = `<span>${col.label}</span><span class="arrow"></span>`;
       btn.onclick = () => {
         if (state.sort === col.name) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
@@ -358,6 +361,7 @@ function createGrid(root, ds) {
       for (const c of data.columns) {
         const th = document.createElement('th');
         th.textContent = c.label;
+        th.title = `${c.label}\n\n${c.desc || `${c.name} (${c.type})`}`;
         hrow.append(th);
       }
       thead.append(hrow);

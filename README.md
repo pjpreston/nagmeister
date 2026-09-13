@@ -443,6 +443,12 @@ Some deliberate details:
 - **Time is real time, not race number**, so a layoff shows as a gap.
 - Date labels are chosen by pixel spacing rather than every *n*th race — races
   cluster, so stepping by index collides.
+- **The most recent run is labelled and given a larger marker.** It is the run
+  being asked about, and selective direct labelling beats a number on every
+  point.
+- The plot band is inset on all four sides, so a point at the series maximum or
+  at either end of the time axis sits inside the panel rather than having its
+  ring clipped by an axis.
 
 `web/chart.js` is hand-written SVG built through the DOM. There is no build step
 in this project and no chart library, and the colours come from the theme tokens
@@ -476,7 +482,43 @@ Or run it in the foreground:
 | Sort | Click any column header; click again to reverse |
 | Filter | Type in the box under a header. Text columns match on substring, or `=exact`. Numeric, date and time columns also take `>5`, `<=2.5`, `1..9` |
 | Search | Type in "Find in table"; Enter or ↓ for the next match, Shift+Enter or ↑ for the previous. Matches wrap at both ends |
+| Tooltips | Hover a column header for what the column means, then its database name and type |
 | Reset | Clears every filter, the sort and the search for that tab |
+
+### Column tooltips
+
+The labels are the source workbook's own headers, and a good few of them —
+`PRB`, `DOB %`, `10 B2L`, `Tear Weight` — mean nothing without the site's own
+documentation. Hovering a header gives the meaning, then the database column
+name and type:
+
+```
+PRB
+
+Percentage of rivals beaten. 100 means it won, 0 means it finished last
+
+prb (DOUBLE)
+
+Click to sort
+```
+
+The descriptions live in `COLUMN_DESC` in `rbd_web.py`, with `TABLE_DESC`
+overriding the handful that mean different things in the two tables — `Date` is
+the race date in `race_results`, but in `prerace_form` it is the date of the
+*past run* the row describes. The race card's computed columns and the graph's
+metric checkboxes carry them too.
+
+**Sixteen `prerace_form` columns deliberately have no description**: the `IPL`
+group, the `B2L` group, `DOB %` / `DOB P/L £1` and `Tear Weight`. These are
+site-specific jargon that the data itself cannot settle, and a guessed
+definition that reads authoritatively is worse than none — nothing later
+contradicts it. Those headers fall back to the column name and type. Add them to
+`COLUMN_DESC` if the source ever documents them.
+
+Three were confirmed against the data rather than assumed: `up_in_trip` against
+each horse's previous distance (67,948 runs further vs 161 shorter),
+`days_since_lto` against the gap between its runs (206,181 of 208,401 exact),
+and `prb` against `(runners - place) / runners`.
 
 The table is ~150k rows, so filtering, sorting, searching and paging all happen
 in DuckDB rather than the browser. Search returns the ordinal position of every

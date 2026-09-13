@@ -75,10 +75,20 @@ thead tr:nth-child(2) th { top: 30px; z-index: 2; }
 thead input {
   width: 100%; min-width: 90px; padding: 4px 8px; border: 0;
   border-top: 1px solid var(--line); background: var(--bg); color: var(--fg);
-  font: inherit;
+  font: inherit; font-size: 12px;
 }
+/* The filter row repeats a placeholder in all 80 columns, which at full
+   strength reads as another row of data competing with the real one. Hold the
+   hints back until the row is actually being used -- hover, focus, or a filter
+   already typed -- so the eye goes to the data first. */
+thead input::placeholder { color: var(--muted); opacity: 0.45; }
+thead input:hover::placeholder,
+thead input:focus::placeholder { opacity: 0.9; }
 thead input:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
-thead input.active { background: color-mix(in srgb, var(--accent) 14%, var(--bg)); }
+thead input.active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  font-weight: 600;
+}
 
 tbody td {
   padding: 4px 9px; border-bottom: 1px solid var(--line);
@@ -222,7 +232,14 @@ tbody tr.selected > td:first-child {
   background-image: linear-gradient(to right, var(--brand) 0 3px, transparent 3px);
 }
 
-.racecard { padding: 14px; border-top: 1px solid var(--line); }
+/* The drill-down sat flush against the grid's own bottom border, so the card
+   read as more of the same table. A tinted surface separates the two: this is
+   detail about one selected row, not another page of rows. */
+.racecard {
+  padding: 14px; border-top: 1px solid var(--line);
+  background: var(--head);
+}
+.racecard .rc-table, .racecard .hf-svg { background: var(--bg); }
 .racecard-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .rc-view {
   font-weight: 600; padding: 7px 14px;
@@ -270,7 +287,14 @@ tbody tr.selected > td:first-child {
 
 /* hairline, solid and one step off the surface: present but recessive */
 .hf-grid { stroke: var(--line); stroke-width: 1; }
+/* the panel's own left rule -- the same hairline as the grid, stood upright, so
+   the series reads against an axis instead of floating in space */
+.hf-axis { stroke: var(--line); stroke-width: 1; }
 .hf-rule { stroke: var(--muted); stroke-width: 1; pointer-events: none; }
+/* the latest run's value, set beside its marker. A text token, not the series
+   colour -- the mark carries identity, the label carries the number */
+.hf-last { fill: var(--fg); font-size: 11px; font-weight: 600;
+           font-variant-numeric: tabular-nums; }
 
 .hf-line {
   fill: none; stroke: var(--accent); stroke-width: 2;
@@ -278,6 +302,9 @@ tbody tr.selected > td:first-child {
 }
 /* the ring is what keeps a marker legible where the line passes under it */
 .hf-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
+/* the most recent run. Drawn larger in chart.js; the wider ring is what holds
+   it apart from the line arriving at it */
+.hf-dot-last { stroke-width: 2.5; }
 
 .hf-boxes {
   display: flex; flex-wrap: wrap; gap: 4px 16px;
