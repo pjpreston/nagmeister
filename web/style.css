@@ -340,3 +340,126 @@ tbody tr.selected > td:first-child {
 .rc-table tbody tr.pickable:hover > td { background: var(--row-hover); }
 .rc-table tbody tr.selected > td { background: var(--row-hover); }
 .rc-table tbody tr.selected > td:first-child { box-shadow: inset 3px 0 0 var(--brand); }
+
+/* --------------------------------------------------------------- AI chat ---
+ *
+ * The panel beside the Races table. Colours come from the theme tokens, so it
+ * follows all 13 themes like everything else.
+ *
+ * Three things the layout has to get right, all of them about the row it
+ * shares with the table:
+ *
+ *   - the table takes only the width its columns need, so the panel begins
+ *     immediately to its right with no strip of empty table between them;
+ *   - the panel takes everything left over, out to the window edge;
+ *   - the panel never makes the row taller than the table. Its height is
+ *     whatever the table's is, and the transcript scrolls inside that.
+ */
+.with-chat { display: flex; align-items: stretch; gap: 0; min-width: 0; }
+
+/* Exactly the width its columns want: no growing (which left a strip of empty
+   table before the panel) and, just as important, no *shrinking*.
+   `flex-shrink: 1` let the row take its space out of the table -- a table
+   reflows rather than overflowing, so the columns silently squeezed instead
+   of the panel giving ground. flex-shrink:0 plus a max-content floor makes the
+   table the fixed side of the row and the panel the elastic one. */
+.panel.compact .with-chat > .tablewrap,
+.with-chat > .tablewrap {
+  flex: 0 0 auto; min-width: max-content;
+}
+
+/* Takes the remainder, out to the right-hand edge. overflow:hidden is what
+   holds it to the table's height -- without it the transcript and the form
+   set the row height between them and the panel hangs below the table. */
+.chat {
+  flex: 1 1 auto; min-width: 0; overflow: hidden;
+  display: flex; flex-direction: column;
+  border-left: 1px solid var(--line); background: var(--head);
+  padding: 8px 10px; gap: 6px;
+}
+
+/* What the chat will take "this race" to mean. Shown once for all the tabs,
+   because it is the same race for each and four copies would cost height the
+   table has not got. */
+.chat-ctx {
+  flex: none; font-size: 11px; color: var(--fg); font-weight: 600;
+  padding: 3px 7px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--line);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-ctx-none { font-weight: 400; color: var(--muted); }
+
+/* One tab per configured model. */
+.chat-tabs { flex: none; display: flex; gap: 4px; flex-wrap: wrap; }
+.chat-tab {
+  padding: 3px 10px; border: 1px solid transparent; border-radius: 6px;
+  background: none; color: var(--muted); font-weight: 600; font-size: 12px;
+}
+.chat-tab:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.chat-tab[aria-selected="true"] {
+  color: var(--bg); background: var(--brand); border-color: var(--brand);
+}
+.chat-tab[aria-selected="true"]:hover { background: var(--brand-hi); color: var(--bg); }
+/* a model with no key is still offered -- it just says why it cannot answer */
+.chat-tab-nokey { opacity: 0.55; }
+.chat-tab-nokey::after { content: " ·"; }
+/* an answer still coming on a tab you have switched away from */
+.chat-tab-busy::after { content: " …"; }
+
+/* min-height:0 on both is what lets the transcript shrink instead of pushing
+   the panel past the table's height. */
+.chat-panes { flex: 1 1 0; min-height: 0; display: flex; }
+.chat-pane { flex: 1 1 auto; min-width: 0; min-height: 0;
+             display: flex; flex-direction: column; gap: 6px; }
+.chat-pane[hidden] { display: none; }
+
+.chat-log {
+  flex: 1 1 0; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 7px;
+  font-size: 13px; line-height: 1.45;
+}
+.chat-msg { display: flex; flex-direction: column; gap: 2px; }
+.chat-who { font-size: 11px; font-weight: 600; color: var(--muted); }
+.chat-text { margin: 0; }
+.chat-text p { margin: 0 0 6px; }
+.chat-text p:last-child { margin-bottom: 0; }
+.chat-user .chat-text {
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 5px 8px;
+}
+.chat-error .chat-who { color: var(--warn-fg); }
+.chat-error .chat-text {
+  background: var(--warn-bg); color: var(--warn-fg);
+  border: 1px solid var(--warn-line); border-radius: 8px; padding: 5px 8px;
+}
+/* which tools the answer read, and which sites -- the difference between an
+   answer from the database and one that also went out to the market */
+.chat-meta { font-size: 11px; color: var(--muted); font-style: italic; }
+
+.chat-form { flex: none; display: flex; flex-direction: column; gap: 5px; }
+.chat-in {
+  width: 100%; resize: none; font: inherit; font-size: 13px;
+  padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--fg);
+}
+.chat-in:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.chat-bar { display: flex; align-items: center; gap: 8px; }
+.chat-send { font-weight: 600; border-color: var(--brand); color: var(--brand); }
+.chat-send:hover:not(:disabled) {
+  background: var(--brand); color: var(--bg); border-color: var(--brand);
+}
+.chat-note { font-size: 11px; }
+
+/* The Races table wants about 990px. Below roughly that plus a readable panel
+   the side-by-side split has nothing left to give -- the table will not shrink
+   any more, so the panel would be squeezed to a sliver and then the row would
+   overflow the window. Stack instead, and give the panel a height of its own. */
+@media (max-width: 1290px) {
+  .with-chat { flex-direction: column; }
+  .panel.compact .with-chat > .tablewrap,
+  .with-chat > .tablewrap { flex: none; }
+  .chat {
+    flex: none; height: 340px;
+    border-left: 0; border-top: 1px solid var(--line);
+  }
+}
