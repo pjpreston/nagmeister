@@ -357,13 +357,16 @@ tbody tr.selected > td:first-child {
  */
 .with-chat { display: flex; align-items: stretch; gap: 0; min-width: 0; }
 
-/* Size to content, not to the space available. `flex: 1` here stretched the
-   table past its last column and left a gap before the panel; the compact
-   rule below already stops it growing vertically, and this stops it growing
-   sideways. The tablewrap keeps its own overflow, so a table wider than the
-   row still scrolls. */
+/* Exactly the width its columns want: no growing (which left a strip of empty
+   table before the panel) and, just as important, no *shrinking*.
+   `flex-shrink: 1` let the row take its space out of the table -- a table
+   reflows rather than overflowing, so the columns silently squeezed instead
+   of the panel giving ground. flex-shrink:0 plus a max-content floor makes the
+   table the fixed side of the row and the panel the elastic one. */
 .panel.compact .with-chat > .tablewrap,
-.with-chat > .tablewrap { flex: 0 1 auto; min-width: 0; }
+.with-chat > .tablewrap {
+  flex: 0 0 auto; min-width: max-content;
+}
 
 /* Takes the remainder, out to the right-hand edge. overflow:hidden is what
    holds it to the table's height -- without it the transcript and the form
@@ -447,9 +450,11 @@ tbody tr.selected > td:first-child {
 }
 .chat-note { font-size: 11px; }
 
-/* Below this the two-column split leaves the table too narrow to read, so the
-   chat drops under it and is given a height of its own. */
-@media (max-width: 1100px) {
+/* The Races table wants about 990px. Below roughly that plus a readable panel
+   the side-by-side split has nothing left to give -- the table will not shrink
+   any more, so the panel would be squeezed to a sliver and then the row would
+   overflow the window. Stack instead, and give the panel a height of its own. */
+@media (max-width: 1290px) {
   .with-chat { flex-direction: column; }
   .panel.compact .with-chat > .tablewrap,
   .with-chat > .tablewrap { flex: none; }
