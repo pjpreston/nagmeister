@@ -543,6 +543,81 @@ way.
 The columns are described by the same `Dataset` entries the browsable tabs use,
 so these endpoints cannot drift from the schema the UI shows.
 
+## Asking an AI about the racing
+
+The **Races** tab carries a chat panel beside its table: pick a model, ask a
+question, and it answers from the database and the web.
+
+| Dropdown | Model |
+| --- | --- |
+| Anthropic/Claude | `claude-opus-5` |
+| **Anthropic/Sonnet** | `claude-sonnet-5` — the default |
+| ChatGPT | `gpt-5.5` |
+| Gemini | `gemini-pro-latest` |
+
+Keys come from the environment and the server is the only thing that sees them:
+
+```bash
+export ANTHROPIC_API_KEY=...   # Anthropic/Claude, Anthropic/Sonnet
+export OPENAI_API_KEY=...      # ChatGPT
+export GOOGLE_API_KEY=...      # Gemini
+```
+
+The page posts a question to `/api/chat` and gets prose back. It is never given
+a key and never calls a vendor itself, so nothing leaks through the JavaScript.
+A model whose key is absent is listed as `(no key)` and names the variable it
+wants — `/api/models` reports readiness, so the panel can say so before a
+question is typed rather than after.
+
+### What the model can see
+
+Five tools over the database, listed under each answer so you can tell an
+answer that read the data from one that did not:
+
+| Tool | Returns |
+| --- | --- |
+| `list_card_dates` | which race days are held, and how many races each has |
+| `list_races` | the races on one day |
+| `get_race_card` | the runners in one race with their record at that race type and distance — the tool for "who wins this?" |
+| `get_horse_form` | one horse's past runs from `prerace_form` |
+| `get_horse_results` | the same horse's results from `race_results` |
+
+These are deliberately **narrower than `/api/horse/*`**. Those endpoints serve a
+programmatic caller and return every column; a busy jumper's form book is 400
+rows of 78 fields, which would crowd out the conversation it is meant to inform.
+`get_horse_form` also collapses its answer to one row per race — the raw table
+holds a run once per card the horse was declared on, and a model told a horse
+has 1,332 runs will reason from 1,332.
+
+Each model also has its vendor's own web search, for the things the database
+does not hold — today's prices at the bookmakers, non-runners, going changes.
+
+### Three vendors, three protocols
+
+Every shape was confirmed against the live APIs rather than recalled, because
+they differ in ways that bite:
+
+- **Anthropic** — official SDK. Web search is Anthropic-hosted, so
+  `web_search_20260209` results arrive in the same response with nothing to
+  execute. Opus also carries the refusal-fallback beta: a betting question is
+  the sort a classifier may decline, and a silent stop is a worse answer than
+  the same question run on the previous Opus.
+- **ChatGPT** — the **Responses** API, not Chat Completions, which rejects web
+  search outright (`Unknown parameter: 'web_search_options'`).
+- **Gemini** — mixing `google_search` with function declarations needs
+  `tool_config.include_server_side_tool_invocations`, or the request is refused
+  rather than degraded.
+
+`rbd_chat.py` takes the `rbd_web` module as an argument instead of importing it.
+`rbd_web` runs as `__main__` under `python rbd_web.py`, so `import rbd_web`
+there would build a *second* module object with its own globals — including a
+`_db_path` still on the default — and every tool would silently read a
+different database than the tabs do.
+
+A conversation is capped at 40 turns and a single answer at 8 tool calls. Both
+are cost limits: the whole thread is re-sent on every question, because none of
+these APIs are stateful, which is also why **Clear** is a real feature.
+
 ## Logo
 
 <img src="web/logo-mark.svg" alt="" width="72" align="left" hspace="14">

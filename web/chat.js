@@ -1,0 +1,162 @@
+'use strict';
+
+// The AI panel beside the Races table.
+//
+// It owns the model dropdown, the transcript and the box you type in. It does
+// not own an API key: the page posts a question to /api/chat and gets prose
+// back, and the keys live in the server process only. Nothing here knows which
+// vendor answered beyond the label in the dropdown.
+//
+// The whole thread goes up on every turn, because none of the vendor APIs are
+// stateful. That is also why Clear is a real feature rather than a nicety --
+// an old thread is re-sent, and re-billed, on every question.
+//
+// Built through the DOM rather than innerHTML: a model's reply is untrusted
+// text, and it is about to be put on the page.
+
+(function () {
+  const MAX_TURNS = 40;   // matches the server's cap, so we fail here not there
+
+  window.nmChat = function mount(root) {
+    const pick = root.querySelector('.chat-model');
+    const log = root.querySelector('.chat-log');
+    const form = root.querySelector('.chat-form');
+    const input = root.querySelector('.chat-in');
+    const send = root.querySelector('.chat-send');
+    const reset = root.querySelector('.chat-reset');
+    const note = root.querySelector('.chat-note');
+
+    let history = [];       // [{role, content}], what gets posted
+    let busy = false;
+    let models = [];
+
+    function say(role, text, meta) {
+      const wrap = document.createElement('div');
+      wrap.className = 'chat-msg chat-' + role;
+      const who = document.createElement('div');
+      who.className = 'chat-who';
+      who.textContent = role === 'user' ? 'You'
+        : role === 'error' ? 'Error'
+        : (models.find((m) => m.key === pick.value) || {}).label || 'AI';
+      const body = document.createElement('div');
+      body.className = 'chat-text';
+      // paragraph per blank line; the models are asked for short prose, and
+      // this keeps their line breaks without interpreting any markup
+      for (const para of text.split(/\n{2,}/)) {
+        const p = document.createElement('p');
+        p.textContent = para.replace(/\n/g, ' ');
+        body.append(p);
+      }
+      wrap.append(who, body);
+      if (meta) {
+        const m = document.createElement('div');
+        m.className = 'chat-meta';
+        m.textContent = meta;
+        wrap.append(m);
+      }
+      log.append(wrap);
+      log.scrollTop = log.scrollHeight;
+      return wrap;
+    }
+
+    function setBusy(on, label) {
+      busy = on;
+      send.disabled = on;
+      input.disabled = on;
+      send.textContent = on ? 'Thinking…' : 'Ask';
+      note.textContent = on ? (label || '') : '';
+    }
+
+    /** The selected model's key is missing, so say which one and stop. */
+    function readiness() {
+      const m = models.find((x) => x.key === pick.value);
+      if (m && !m.ready) {
+        note.textContent = `needs ${m.env}`;
+        return false;
+      }
+      note.textContent = '';
+      return true;
+    }
+
+    async function ask(question) {
+      history.push({ role: 'user', content: question });
+      say('user', question);
+      setBusy(true, 'reading the database…');
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: pick.value, messages: history }),
+        });
+        const body = await res.json().catch(() => ({ error: res.statusText }));
+        if (!res.ok) throw new Error(body.error || 'request failed');
+        history.push({ role: 'assistant', content: body.reply });
+        const used = (body.tools_used || []);
+        say('assistant', body.reply,
+            used.length ? 'read: ' + [...new Set(used)].join(', ') : null);
+      } catch (e) {
+        // the failed turn is dropped, so a retry does not resend it
+        history.pop();
+        say('error', e.message);
+      } finally {
+        setBusy(false);
+        readiness();
+      }
+    }
+
+    form.onsubmit = (ev) => {
+      ev.preventDefault();
+      const q = input.value.trim();
+      if (!q || busy) return;
+      if (!readiness()) return;
+      if (history.length >= MAX_TURNS) {
+        say('error', 'This conversation is long enough to be expensive to re-send. '
+                   + 'Clear it and start again.');
+        return;
+      }
+      input.value = '';
+      ask(q);
+    };
+
+    // Enter sends, Shift+Enter for a newline -- the box is multi-line because
+    // a form question can be long, but sending is the common case
+    input.onkeydown = (ev) => {
+      if (ev.key === 'Enter' && !ev.shiftKey) {
+        ev.preventDefault();
+        form.requestSubmit();
+      }
+    };
+
+    reset.onclick = () => {
+      history = [];
+      log.textContent = '';
+      readiness();
+      input.focus();
+    };
+
+    pick.onchange = readiness;
+
+    return {
+      async load() {
+        try {
+          const d = await getJSON('/api/models');
+          models = d.models;
+          pick.textContent = '';
+          for (const m of models) {
+            const o = document.createElement('option');
+            o.value = m.key;
+            // the model id is in the tooltip, not the label: the label is the
+            // ticket's wording and should stay stable as ids move on
+            o.textContent = m.label + (m.ready ? '' : ' (no key)');
+            o.title = `${m.label} — ${m.model}\nNeeds ${m.env}`;
+            pick.append(o);
+          }
+          pick.value = d.default;
+          readiness();
+        } catch (e) {
+          note.textContent = e.message;
+        }
+      },
+    };
+  };
+})();

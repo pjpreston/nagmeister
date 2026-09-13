@@ -421,6 +421,10 @@ function createGrid(root, ds) {
     if (host && window.nmHorseChart) chart = window.nmHorseChart(host);
   }
 
+  // the model list is fetched once, when the tab is first opened
+  const chatHost = root.querySelector('.chat');
+  const chatPanel = chatHost && window.nmChat ? window.nmChat(chatHost) : null;
+
   return {
     key,
     focusSearch: () => el('g-q').select(),
@@ -439,6 +443,8 @@ function createGrid(root, ds) {
           `${st.rows.toLocaleString()} rows · ${st.files.toLocaleString()} ${unit} · ${st.from} → ${st.to}`;
         buildHead();
         await reload();
+        // the chat's own failure must not take the table down with it
+        if (chatPanel) chatPanel.load();
       } catch (e) {
         state.loaded = false;
         banner(e.message);
@@ -479,6 +485,19 @@ const grids = new Map();
       panel.hidden = true;
       panel.appendChild(tpl.content.cloneNode(true));
       if (ds.compact) panel.classList.add('compact');
+      // The chat sits beside the table, not under it, so the table and the
+      // panel share a flex row while the toolbar above and the pager below
+      // stay full width.
+      if (ds.chat && window.nmChat) {
+        const ctpl = document.getElementById('chattpl');
+        const wrap = panel.querySelector('.tablewrap');
+        if (ctpl && wrap) {
+          const row = document.createElement('div');
+          row.className = 'with-chat';
+          wrap.replaceWith(row);
+          row.append(wrap, ctpl.content.cloneNode(true));
+        }
+      }
       if (ds.detail) {
         const dtpl = document.getElementById(ds.detail + 'tpl');
         if (dtpl) panel.appendChild(dtpl.content.cloneNode(true));

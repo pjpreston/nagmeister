@@ -19,6 +19,7 @@ attached. DuckDB does not allow a reader alongside a writer, so close any
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -28,6 +29,7 @@ use_venv()  # must precede the third-party imports below
 
 import duckdb  # noqa: E402
 from fastapi import FastAPI, HTTPException, Query, Request  # noqa: E402
+from fastapi.concurrency import run_in_threadpool  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
@@ -66,7 +68,7 @@ class Dataset:
     """
 
     def __init__(self, key, table, label, columns, extra, order, count_distinct, date_col,
-                 unit="files", compact=False, detail=None):
+                 unit="files", compact=False, detail=None, chat=False):
         self.key = key
         self.table = table
         self.label = label
@@ -74,6 +76,8 @@ class Dataset:
         self.compact = compact
         # detail: the drill-down this table supports, if any
         self.detail = detail
+        # chat: whether this tab carries the AI panel beside its table
+        self.chat = chat
         self.meta = [(db, header, typ) for _, header, db, typ in columns] + extra
         self.names = [m[0] for m in self.meta]
         self.types = {m[0]: m[2] for m in self.meta}
@@ -114,7 +118,7 @@ DATASETS = {
         sorted((c for c in PRERACE_COLUMNS if c[2] in RACES_COLUMNS),
                key=lambda c: RACES_COLUMNS.index(c[2])), [],
         ["race_date", "race_time", "track"], "race_date", "race_date",
-        unit="cards", compact=True, detail="racecard",
+        unit="cards", compact=True, detail="racecard", chat=True,
     ),
 }
 
@@ -328,7 +332,8 @@ def parse_filters(request_params):
 def api_datasets():
     """The tables the UI can show, in tab order."""
     return {"datasets": [
-        {"key": d.key, "label": d.label, "compact": d.compact, "detail": d.detail}
+        {"key": d.key, "label": d.label, "compact": d.compact, "detail": d.detail,
+         "chat": d.chat}
         for d in DATASETS.values()
     ]}
 
@@ -425,7 +430,16 @@ def racecard(request: Request):
     time_ = (request.query_params.get("time") or "").strip()
     if not (day and track and time_):
         raise HTTPException(400, "date, track and time are all required")
+    return race_card(day, track, time_)
 
+
+def race_card(day, track, time_):
+    """The body of /api/racecard, callable without a Request.
+
+    Split out so the chat tools in rbd_chat read a card through exactly the
+    same query the Races tab draws, rather than a second one that could drift
+    from it.
+    """
     cols = ", ".join(f'r."{c}"' for c, _ in RACECARD_FIELDS)
     aggs = ",\n                   ".join(
         f"{sql} AS {alias}" for alias, _, _, sql in RACECARD_STATS
@@ -662,6 +676,73 @@ def horse_results(horse: str = HORSE_Q, limit: int = LIMIT_Q, offset: int = OFFS
     """One horse's results: a row per race it ran, with the finishing position,
     prices and the derived dist_yds, win_dist_len and one_pnd_win."""
     return horse_rows(DATASETS["results"], horse, limit, offset)
+
+
+# -------------------------------------------------------------------- chat ---
+#
+# The browser talks to these; only this process talks to a model vendor. The
+# API keys are read from the environment by rbd_chat and never appear in a
+# response, so a key cannot leak through the page even if someone reads the
+# JavaScript.
+#
+# Imported lazily inside the handlers: rbd_chat imports the anthropic SDK, and
+# a missing dependency should break the chat rather than the table browser.
+
+
+@app.get("/api/models", summary="The AI models the chat panel offers")
+def api_models():
+    """The dropdown, in order, with which key each one needs and whether that
+    key is actually set -- so the page can say "no key" before a question is
+    typed rather than after."""
+    import rbd_chat
+
+    return {
+        "default": rbd_chat.DEFAULT_MODEL,
+        "models": [
+            {"key": k, "label": label, "vendor": vendor, "model": mid,
+             "env": rbd_chat.KEY_ENV[vendor],
+             "ready": bool(os.environ.get(rbd_chat.KEY_ENV[vendor]))}
+            for k, label, vendor, mid in rbd_chat.MODELS
+        ],
+    }
+
+
+@app.post("/api/chat", summary="Ask the selected model a racing question")
+async def api_chat(request: Request):
+    """One turn of the conversation.
+
+    Takes {"model": key, "messages": [{role, content}, ...]} -- the whole
+    thread, because none of these APIs are stateful -- and returns the reply
+    plus the names of any tools the model used, which is what lets the panel
+    show that an answer came from the database rather than from memory.
+    """
+    import rbd_chat
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "expected a JSON body")
+
+    model = (body.get("model") or rbd_chat.DEFAULT_MODEL).strip()
+    history = body.get("messages") or []
+    if not isinstance(history, list) or not history:
+        raise HTTPException(400, "messages must be a non-empty list")
+    for m in history:
+        if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
+            raise HTTPException(400, "each message needs role user|assistant")
+        if not isinstance(m.get("content"), str) or not m["content"].strip():
+            raise HTTPException(400, "each message needs non-empty text content")
+    if len(history) > 40:
+        raise HTTPException(400, "conversation too long -- start a new one")
+
+    try:
+        # the vendor call blocks, so keep it off the event loop
+        text, used = await run_in_threadpool(
+            rbd_chat.reply, model, history, sys.modules[__name__])
+    except rbd_chat.ChatError as e:
+        raise HTTPException(502, str(e))
+
+    return {"model": model, "reply": text, "tools_used": used}
 
 
 @app.get("/api/stats")

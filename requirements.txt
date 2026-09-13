@@ -9,3 +9,8 @@ duckdb>=1.1
 # rbd_web.py -- the table browser
 fastapi>=0.110
 uvicorn[standard]>=0.27
+
+# rbd_chat.py -- the AI panel on the Races tab. Only Anthropic has an SDK here:
+# ChatGPT and Gemini are called over their REST APIs with `requests`, which is
+# already a dependency, so they add nothing to install.
+anthropic>=1.5

@@ -146,6 +146,24 @@
   </div>
 </template>
 
+<template id="chattpl">
+  <aside class="chat" aria-label="AI chat">
+    <label class="chat-pick">AI models
+      <select class="chat-model"></select>
+    </label>
+    <div class="chat-log" role="log" aria-live="polite"></div>
+    <form class="chat-form">
+      <textarea class="chat-in" rows="3" spellcheck="false"
+                placeholder="Ask about a race, a horse, or who the form favours…"></textarea>
+      <div class="chat-bar">
+        <button type="submit" class="chat-send">Ask</button>
+        <button type="button" class="chat-reset ghost" title="Clear the conversation">Clear</button>
+        <span class="chat-note hint"></span>
+      </div>
+    </form>
+  </aside>
+</template>
+
 
 
 <div id="savedmsg" class="savedmsg" hidden>Saved</div>
@@ -153,6 +171,8 @@
 <script src="/static/settings.js"></script>
 <!-- defines window.nmHorseChart, so it must precede app.js -->
 <script src="/static/chart.js"></script>
+<!-- defines window.nmChat, so it must precede app.js -->
+<script src="/static/chat.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
