@@ -210,17 +210,41 @@ existed: opening it adds the columns, and `--rederive` fills them in.
 
 ### Pre-race data
 
-`rbd_import.py --prerace` loads the workbook that `rbd_prerace.py` downloads
+`rbd_import.py --prerace` loads the workbooks that `rbd_prerace.py` downloads
 into a separate `prerace_form` table.
 
 ```bash
-python rbd_import.py --prerace                    # today's file
-python rbd_import.py --prerace --date 06/09/2026  # a specific day
+python rbd_import.py --prerace                    # every day not yet loaded
+python rbd_import.py --prerace --date 06/09/2026  # just that day
+python rbd_import.py --prerace --force            # reload every day on disk
+python rbd_import.py --prerace --file "data/pre-race/2026-09/Daily - 06092026.xlsx"
 ```
+
+With no `--date` or `--file` it loads every pre-race workbook on disk whose card
+date is not already in `prerace_form`, oldest first — the same "everything not
+yet loaded" default the results side has. So the routine is
+`rbd_prerace.py backfill` to fetch the days, then `rbd_import.py --prerace` to
+load the lot, rather than one day at a time.
+
+"Already loaded" is read straight from `prerace_form`, not from a ledger. The
+pre-race load deletes and re-inserts on `prerace_date`, so the rows in the table
+*are* the record of what is in, and the two cannot drift apart the way a
+separate ledger could.
 
 It is re-runnable by design: every load deletes whatever is already held for
 that day and re-inserts, inside one transaction, so a failure part-way leaves
 the previous load intact rather than a half-replaced day.
+
+Each workbook gets its own transaction and a file the loader cannot read is
+logged and stepped over rather than ending the run — the archive reaches back to
+2020 and the older files do not all have the layout `PRERACE_COLUMNS` describes,
+so a batch is expected to contain some it has to skip. The run still exits
+non-zero if anything failed.
+
+`--file` takes the card date from the filename. Passing `--date` as well
+overrides it; a file whose name carries no date needs `--date`, because
+`prerace_date` is the key the load deletes on and guessing it would file one
+day's card under another.
 
 The workbook has a sheet per meeting — named after the racecourse, so the names
 change daily — plus `Combined` and `Selections`. `Combined` is the union of the
