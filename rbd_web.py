@@ -27,7 +27,7 @@ from _venv import use_venv
 use_venv()  # must precede the third-party imports below
 
 import duckdb  # noqa: E402
-from fastapi import FastAPI, HTTPException, Request  # noqa: E402
+from fastapi import FastAPI, HTTPException, Query, Request  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
@@ -46,6 +46,12 @@ DEFAULT_DB = Path("data/nagmeister.duckdb")
 WEB_DIR = Path(__file__).parent / "web"
 MAX_MATCHES = 20_000  # cap on cells returned by one search
 PAGE_MAX = 500
+# cap on rows one /api/horse/* call returns. Generous, because "all of it" is
+# the point of those endpoints, but not unbounded: a busy jumper already has
+# 400+ prerace_form rows of 78 columns each, and a caller that asks for every
+# horse in a race should not be able to ask for tens of megabytes by accident.
+AGENT_MAX = 1000
+SUGGEST_MAX = 10  # near-miss names offered when a horse is not found
 
 NUMERIC = {"INTEGER", "DOUBLE"}
 
@@ -550,6 +556,112 @@ def horseform(request: Request):
             for r in rows
         ],
     }
+
+
+# ------------------------------------------------------------------- agent ---
+#
+# Endpoints meant to be called by an AI agent rather than by the page.
+#
+# They differ from the grid endpoints on purpose:
+#
+#   * rows are objects keyed by column name, not positional arrays, so a row
+#     carries its own meaning and the caller does not have to hold a separate
+#     column list to read one;
+#   * values keep their JSON types -- a number stays a number -- rather than
+#     being stringified for display;
+#   * the query parameters are declared rather than read out of the raw query
+#     string, so /api/docs and /openapi.json describe them and an agent can
+#     discover how to call these without being told.
+#
+# The columns come from the same Dataset entries the grid uses, so these
+# describe exactly the schema the tabs show and cannot drift from it.
+
+
+def jsonable(v):
+    """A DuckDB value as something json can hold, without losing type.
+
+    Only dates and times need help; ints, floats, strings and None are already
+    fine, and turning those into strings would make the caller parse them back.
+    """
+    return v.isoformat() if hasattr(v, "isoformat") else v
+
+
+def horse_rows(ds, horse, limit, offset):
+    """Every row of one dataset for one horse, oldest run first.
+
+    Matching is case-insensitive because the two tables disagree about the
+    capitals in a name: race_results has 'Moon DOrange' where prerace_form has
+    'Moon Dorange', and the same for most French and Irish names. An agent that
+    took a name from one endpoint could not query the other otherwise. The
+    spelling this table actually holds comes back in `horse`.
+
+    A miss returns 200 with no rows and a list of near-miss names rather than a
+    404: not finding a horse is a normal answer to a reasonable question, and
+    the suggestions are what let a caller correct a spelling without a separate
+    lookup endpoint.
+    """
+    cur = db()
+    cols = ", ".join(f'"{c}"' for c in ds.names)
+    where = "WHERE upper(horse) = upper(?)"
+    total = cur.execute(
+        f"SELECT count(*) FROM {ds.table} {where}", [horse]
+    ).fetchone()[0]
+
+    if not total:
+        near = cur.execute(
+            f"SELECT DISTINCT horse FROM {ds.table}"
+            f" WHERE horse ILIKE ? AND horse IS NOT NULL"
+            f" ORDER BY horse LIMIT {SUGGEST_MAX}",
+            [f"%{horse}%"],
+        ).fetchall()
+        return {
+            "horse": horse, "table": ds.table, "found": False,
+            "total": 0, "offset": 0, "limit": limit, "truncated": False,
+            "columns": [{"name": n, "label": l, "type": t} for n, l, t in ds.meta],
+            "rows": [],
+            "suggestions": [r[0] for r in near],
+        }
+
+    # rowid terminates the sort so paging is stable: every runner in a race
+    # shares (race_date, race_time), so without it two pages can disagree
+    rows = cur.execute(
+        f"SELECT {cols} FROM {ds.table} {where}"
+        f" ORDER BY race_date, race_time, rowid LIMIT ? OFFSET ?",
+        [horse, limit, offset],
+    ).fetchall()
+    return {
+        "horse": rows[0][ds.names.index("horse")] if rows else horse,
+        "table": ds.table,
+        "found": True,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "truncated": offset + len(rows) < total,
+        "order": "race_date, race_time",
+        "columns": [{"name": n, "label": l, "type": t} for n, l, t in ds.meta],
+        "rows": [{n: jsonable(v) for n, v in zip(ds.names, r)} for r in rows],
+    }
+
+
+HORSE_Q = Query(..., description="Horse name, matched exactly but case-insensitively",
+                examples=["Rockley Point"])
+LIMIT_Q = Query(AGENT_MAX, ge=1, le=AGENT_MAX, description="Max rows to return")
+OFFSET_Q = Query(0, ge=0, description="Rows to skip, for paging through `total`")
+
+
+@app.get("/api/horse/form", summary="Every prerace_form row for one horse")
+def horse_form(horse: str = HORSE_Q, limit: int = LIMIT_Q, offset: int = OFFSET_Q):
+    """One horse's whole form book: a row per past run, from every card it was
+    declared on. A run held on more than one card appears once per card, so
+    deduplicate on (race_date, track, race_time) before counting runs."""
+    return horse_rows(DATASETS["form"], horse, limit, offset)
+
+
+@app.get("/api/horse/results", summary="Every race_results row for one horse")
+def horse_results(horse: str = HORSE_Q, limit: int = LIMIT_Q, offset: int = OFFSET_Q):
+    """One horse's results: a row per race it ran, with the finishing position,
+    prices and the derived dist_yds, win_dist_len and one_pnd_win."""
+    return horse_rows(DATASETS["results"], horse, limit, offset)
 
 
 @app.get("/api/stats")
