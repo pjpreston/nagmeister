@@ -494,6 +494,55 @@ DuckDB does not allow a reader alongside a writer, so close any `duckdb` CLI
 session or `rbd_import.py` run before starting the server; it reports this
 clearly if the file is locked.
 
+## Querying from an agent
+
+Two endpoints are meant to be called by an AI agent rather than by the page:
+
+```bash
+curl 'http://127.0.0.1:8000/api/horse/form?horse=Rockley%20Point'
+curl 'http://127.0.0.1:8000/api/horse/results?horse=Rockley%20Point'
+```
+
+`form` returns every `prerace_form` row for the horse — its whole form book.
+`results` returns every `race_results` row — a row per race it actually ran,
+including the derived `dist_yds`, `win_dist_len` and `one_pnd_win`. Both come
+back oldest run first, with `limit` (default and max 1000) and `offset` for
+paging, and `total` so a caller knows whether it has everything.
+
+They differ from the grid endpoints deliberately:
+
+- **Rows are objects keyed by column name**, not positional arrays, so one row
+  carries its own meaning and the caller does not need a separate column list
+  to read it.
+- **Values keep their JSON types.** A number stays a number; only dates and
+  times become strings, as ISO.
+- **The parameters are declared**, so `/api/docs` and `/openapi.json` describe
+  them and an agent can work out how to call these without being told. The grid
+  endpoints take arbitrary `f_<column>` filters out of the raw query string and
+  so document nothing.
+
+Two behaviours worth knowing:
+
+**Matching is case-insensitive**, because the two tables disagree about the
+capitals in a name — `race_results` has `Moon DOrange` where `prerace_form` has
+`Moon Dorange`, and likewise for most French and Irish names. Without that, an
+agent could not take a name from one endpoint and query the other. Each response
+echoes back the spelling *that* table holds, in `horse`.
+
+**A miss is a 200, not a 404**, with `found: false` and up to ten near-miss
+names in `suggestions` — asking for `Rockley` suggests `Rockley Point`. Not
+finding a horse is a normal answer to a reasonable question, and the suggestions
+are what let a caller fix a spelling without a separate lookup endpoint.
+
+One caveat when counting runs from `/api/horse/form`: a row is one *past run*,
+and a run appears once per card the horse was declared on, so the same race can
+come back several times. Deduplicate on `(race_date, track, race_time)` before
+counting — see [Pre-race data](#pre-race-data) for why the table is shaped that
+way.
+
+The columns are described by the same `Dataset` entries the browsable tabs use,
+so these endpoints cannot drift from the schema the UI shows.
+
 ## Logo
 
 <img src="web/logo-mark.svg" alt="" width="72" align="left" hspace="14">
