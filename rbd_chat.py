@@ -70,6 +70,11 @@ KEY_ENV = {
 }
 
 MAX_STEPS = 8          # tool round trips before we stop; a runaway loop is billable
+# Total tool calls allowed for one question. MAX_STEPS alone is not a budget:
+# every vendor can emit many calls in a single round trip, and asked an open
+# question ChatGPT fetched all 24 race cards on a day inside two of them. Each
+# card is thousands of tokens of JSON, so the bill is set by calls, not steps.
+MAX_CALLS = 20
 MAX_TOKENS = 8000
 HTTP_TIMEOUT = 180     # a search-and-reason turn is slow; this is not a page load
 
@@ -387,9 +392,18 @@ def chat_openai(model_id, history, call, system):
                 for c in (o.get("content") or []))
             return text.strip()
 
-        # the call items are echoed back verbatim, then answered by call_id
-        for c in calls:
-            items.append(c)
+        # The *whole* assistant turn goes back, not just the function_call
+        # items. gpt-5.x emits a `reasoning` item alongside its calls, and the
+        # API rejects a function_call whose reasoning item is missing:
+        #
+        #   Item 'fc_...' of type 'function_call' was provided without its
+        #   required 'reasoning' item: 'rs_...'
+        #
+        # Echoing everything also covers web_search_call items, which the API
+        # accepts back as input -- confirmed against it, along with the failure
+        # above, which only appears once the model actually reasons. A question
+        # simple enough not to need reasoning never triggered it.
+        items.extend(out)
         for c in calls:
             args = json.loads(c.get("arguments") or "{}")
             items.append({"type": "function_call_output", "call_id": c["call_id"],
@@ -484,6 +498,14 @@ def reply(model_key, history, web, context=None):
     used = []
 
     def call(name, args):
+        # Past the budget, answer the tool with a refusal rather than raising:
+        # the model then writes its answer from what it already fetched, which
+        # is a better outcome than losing the turn. Every vendor treats an
+        # unexpected tool result as something to read, not a fatal error.
+        if len(used) >= MAX_CALLS:
+            return {"error": f"Tool budget of {MAX_CALLS} calls is spent for this "
+                             "question. Answer from what you have already "
+                             "gathered, and say it is based on a partial look."}
         used.append(name)
         return run_tool(web, name, args)
 
