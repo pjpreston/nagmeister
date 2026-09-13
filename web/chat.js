@@ -17,7 +17,9 @@
 (function () {
   const MAX_TURNS = 40;   // matches the server's cap, so we fail here not there
 
-  window.nmChat = function mount(root) {
+  // `getContext` is supplied by the grid: it returns what the user has
+  // selected on the tab, so a question can say "this race" and mean it.
+  window.nmChat = function mount(root, getContext) {
     const pick = root.querySelector('.chat-model');
     const log = root.querySelector('.chat-log');
     const form = root.querySelector('.chat-form');
@@ -29,6 +31,24 @@
     let history = [];       // [{role, content}], what gets posted
     let busy = false;
     let models = [];
+
+    // Shown above the transcript, because the model is about to assume it and
+    // the user should be able to see what "this race" resolves to.
+    const ctxLine = document.createElement('div');
+    ctxLine.className = 'chat-ctx';
+    root.querySelector('.chat-log').before(ctxLine);
+
+    function context() {
+      return (getContext ? getContext() : null) || {};
+    }
+
+    function showContext() {
+      const c = context();
+      ctxLine.textContent = c.date
+        ? `About: ${c.track} ${c.time} · ${c.date}` + (c.horse ? ` · ${c.horse}` : '')
+        : 'No race selected — pick one above, or name one in your question.';
+      ctxLine.classList.toggle('chat-ctx-none', !c.date);
+    }
 
     function say(role, text, meta) {
       const wrap = document.createElement('div');
@@ -86,7 +106,8 @@
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: pick.value, messages: history }),
+          body: JSON.stringify({ model: pick.value, messages: history,
+                                 context: context() }),
         });
         const body = await res.json().catch(() => ({ error: res.statusText }));
         if (!res.ok) throw new Error(body.error || 'request failed');
@@ -131,12 +152,15 @@
       history = [];
       log.textContent = '';
       readiness();
+      showContext();
       input.focus();
     };
 
     pick.onchange = readiness;
 
     return {
+      /** Called by the grid whenever the selected race or runner changes. */
+      refresh: showContext,
       async load() {
         try {
           const d = await getJSON('/api/models');
@@ -153,6 +177,7 @@
           }
           pick.value = d.default;
           readiness();
+          showContext();
         } catch (e) {
           note.textContent = e.message;
         }

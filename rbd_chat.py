@@ -262,6 +262,39 @@ Format for a terminal-width panel: short paragraphs, no tables wider than a \
 phrase, no headings for a two-line answer."""
 
 
+# Appended to the system prompt when the user has a race selected on the tab.
+# Kept separate from SYSTEM because it changes with every click, and because
+# what it is really doing is resolving the word "this" -- the user is looking
+# at a race and should not have to spell out which one.
+CONTEXT_NOTE = """
+
+The user currently has this race selected on the Races tab:
+
+    date {date}, track {track}, off time {time}
+
+That is what "this race", "the race", "these runners" or a question with no \
+race named refers to. Call get_race_card with exactly those three values -- do \
+not go looking for the day first. If they name a different race, use theirs \
+instead."""
+
+HORSE_NOTE = """
+
+They also have {horse} selected among the runners, so an unqualified "this \
+horse" or "it" means that one."""
+
+
+def build_system(context):
+    """SYSTEM, plus what the user is looking at."""
+    if not context or not context.get("date"):
+        return SYSTEM
+    note = SYSTEM + CONTEXT_NOTE.format(
+        date=context["date"], track=context.get("track", "?"),
+        time=context.get("time", "?"))
+    if context.get("horse"):
+        note += HORSE_NOTE.format(horse=context["horse"])
+    return note
+
+
 # --------------------------------------------------------------- anthropic ---
 
 def _anthropic_tools():
@@ -271,7 +304,7 @@ def _anthropic_tools():
             for t in TOOLS]
 
 
-def chat_anthropic(model_id, history, call):
+def chat_anthropic(model_id, history, call, system):
     import anthropic
 
     client = anthropic.Anthropic()
@@ -293,7 +326,7 @@ def chat_anthropic(model_id, history, call):
 
     for _ in range(MAX_STEPS):
         try:
-            r = create(model=model_id, max_tokens=MAX_TOKENS, system=SYSTEM,
+            r = create(model=model_id, max_tokens=MAX_TOKENS, system=system,
                        thinking={"type": "adaptive"}, messages=msgs, tools=tools,
                        **extra)
         except anthropic.AuthenticationError:
@@ -326,7 +359,7 @@ def chat_anthropic(model_id, history, call):
 
 # ------------------------------------------------------------------ openai ---
 
-def chat_openai(model_id, history, call):
+def chat_openai(model_id, history, call, system):
     key = os.environ["OPENAI_API_KEY"]
     tools = [{"type": "web_search"}] + [
         {"type": "function", "name": t["name"], "description": t["description"],
@@ -339,7 +372,7 @@ def chat_openai(model_id, history, call):
         r = requests.post(
             "https://api.openai.com/v1/responses",
             headers={"Authorization": f"Bearer {key}"},
-            json={"model": model_id, "instructions": SYSTEM, "input": items,
+            json={"model": model_id, "instructions": system, "input": items,
                   "tools": tools, "max_output_tokens": MAX_TOKENS},
             timeout=HTTP_TIMEOUT)
         body = r.json()
@@ -368,7 +401,7 @@ def chat_openai(model_id, history, call):
 
 # ------------------------------------------------------------------ gemini ---
 
-def chat_google(model_id, history, call):
+def chat_google(model_id, history, call, system):
     key = os.environ["GOOGLE_API_KEY"]
     url = ("https://generativelanguage.googleapis.com/v1beta/models/"
            f"{model_id}:generateContent")
@@ -387,7 +420,7 @@ def chat_google(model_id, history, call):
         r = requests.post(
             url, headers={"x-goog-api-key": key},
             json={"contents": contents,
-                  "systemInstruction": {"parts": [{"text": SYSTEM}]},
+                  "systemInstruction": {"parts": [{"text": system}]},
                   "tools": tools,
                   # without this Gemini refuses google_search alongside
                   # functionDeclarations rather than dropping one of them
@@ -427,11 +460,16 @@ DRIVERS = {"anthropic": chat_anthropic, "openai": chat_openai,
            "google": chat_google}
 
 
-def reply(model_key, history, web):
+def reply(model_key, history, web, context=None):
     """Answer the last message in `history`. Returns (text, tools_used).
 
     `web` is the rbd_web module the server is actually running -- see run_tool
     for why it is passed rather than imported.
+
+    `context` is what the user has selected on the tab, if anything: the race,
+    and the runner within it. It resolves the pronouns -- somebody looking at a
+    race card should be able to ask "who wins this?" without retyping the
+    course and the off time.
     """
     if model_key not in BY_KEY:
         raise ChatError(f"unknown model {model_key!r}")
@@ -449,7 +487,7 @@ def reply(model_key, history, web):
         used.append(name)
         return run_tool(web, name, args)
 
-    text = DRIVERS[vendor](model_id, history, call)
+    text = DRIVERS[vendor](model_id, history, call, build_system(context))
     if not text:
         raise ChatError(f"{label} returned an empty answer.")
     return text, used

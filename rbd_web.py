@@ -934,10 +934,21 @@ async def api_chat(request: Request):
     if len(history) > 40:
         raise HTTPException(400, "conversation too long -- start a new one")
 
+    # What the user has selected on the tab, so they can ask "who wins this?"
+    # without naming the race. Strings only, and only the four keys -- this
+    # lands in a system prompt, so it is not a place to accept arbitrary text.
+    raw = body.get("context") or {}
+    context = {}
+    if isinstance(raw, dict):
+        for k in ("date", "track", "time", "horse"):
+            v = raw.get(k)
+            if isinstance(v, str) and v.strip():
+                context[k] = v.strip()[:80]
+
     try:
         # the vendor call blocks, so keep it off the event loop
         text, used = await run_in_threadpool(
-            rbd_chat.reply, model, history, sys.modules[__name__])
+            rbd_chat.reply, model, history, sys.modules[__name__], context)
     except rbd_chat.ChatError as e:
         raise HTTPException(502, str(e))
 

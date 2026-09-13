@@ -414,3 +414,12 @@ tbody tr.selected > td:first-child {
   }
   .chat-log { max-height: 320px; }
 }
+
+/* What the chat will take "this race" to mean. Shown because the model is
+   about to assume it. */
+.chat-ctx {
+  font-size: 11px; color: var(--fg); font-weight: 600;
+  padding: 4px 7px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--line);
+}
+.chat-ctx-none { font-weight: 400; color: var(--muted); }

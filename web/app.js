@@ -305,6 +305,10 @@ function createGrid(root, ds) {
 
   function selectRace(pick) {
     state.selected = pick;
+    // a new race means a new subject for the chat, and the old runner is no
+    // longer one of its runners
+    state.horse = null;
+    if (chatPanel) chatPanel.refresh();
     for (const tr of root.querySelectorAll('.g-body tr')) {
       const row = [...tr.children].map((td) => (td.classList.contains('null') ? null : td.textContent));
       tr.classList.toggle('selected', sameRace(raceKeyOf(row), pick));
@@ -335,6 +339,7 @@ function createGrid(root, ds) {
     note(out, 'Loading…');
     if (chart) chart.clear();
     state.horse = null;
+    if (chatPanel) chatPanel.refresh();
     try {
       const q = new URLSearchParams({ date: pick.date, track: pick.track, time: pick.time });
       const data = await getJSON('/api/racecard?' + q);
@@ -404,6 +409,7 @@ function createGrid(root, ds) {
     const pick = state.selected;
     if (!chart || !pick) return;
     state.horse = horse;
+    if (chatPanel) chatPanel.refresh();
     for (const tr of root.querySelectorAll('.rc-table tbody tr')) {
       const cell = tr.querySelector('td');
       tr.classList.toggle('selected', !!cell && cell.textContent === horse);
@@ -427,7 +433,14 @@ function createGrid(root, ds) {
 
   // the model list is fetched once, when the tab is first opened
   const chatHost = root.querySelector('.chat');
-  const chatPanel = chatHost && window.nmChat ? window.nmChat(chatHost) : null;
+  // The chat asks the grid what the user is looking at, rather than the grid
+  // pushing into the chat: the selection lives here, and this way the panel
+  // always reads the current value instead of a copy that can go stale.
+  const chatPanel = chatHost && window.nmChat
+    ? window.nmChat(chatHost, () => (state.selected
+        ? { ...state.selected, horse: state.horse || '' }
+        : null))
+    : null;
 
   return {
     key,
