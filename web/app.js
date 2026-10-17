@@ -30,6 +30,47 @@ function debounce(fn, ms) {
   return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
 
+// A small right-click menu. One element shared by every grid, since only one
+// menu can be open at a time; it closes on any click, Escape, scroll or resize.
+let menuEl = null;
+
+function closeMenu() {
+  if (menuEl) menuEl.hidden = true;
+}
+
+/** Open the menu at a viewport point. items: [label, action][] */
+function openMenu(x, y, items) {
+  if (!menuEl) {
+    menuEl = document.createElement('div');
+    menuEl.className = 'ctxmenu';
+    menuEl.setAttribute('role', 'menu');
+    document.body.append(menuEl);
+    document.addEventListener('click', closeMenu);
+    // capture runs before the cell's own handler, so right-clicking another
+    // horse closes this menu and then opens a fresh one
+    document.addEventListener('contextmenu', closeMenu, true);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+    window.addEventListener('resize', closeMenu);
+    // capture, so a scroll inside the panel closes it too, not only the page
+    document.addEventListener('scroll', closeMenu, true);
+  }
+  menuEl.textContent = '';
+  for (const [label, action] of items) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.textContent = label;
+    b.onclick = () => { closeMenu(); action(); };
+    menuEl.append(b);
+  }
+  menuEl.hidden = false;
+  // keep it on screen when opened near the right or bottom edge
+  const { width, height } = menuEl.getBoundingClientRect();
+  menuEl.style.left = Math.min(x, window.innerWidth - width - 4) + 'px';
+  menuEl.style.top = Math.min(y, window.innerHeight - height - 4) + 'px';
+  menuEl.querySelector('button').focus({ preventScroll: true });
+}
+
 function createGrid(root, ds) {
   const key = ds.key;
   const state = {
@@ -281,6 +322,7 @@ function createGrid(root, ds) {
     const btn = root.querySelector('.rc-view');
     const hint = root.querySelector('.rc-hint');
     if (out) out.innerHTML = '';
+    clearHistory();
     if (btn) btn.disabled = true;
     if (hint) hint.textContent = 'Select a race above.';
     reload();
@@ -337,6 +379,7 @@ function createGrid(root, ds) {
     const pick = state.selected;
     if (!out || !pick) return;
     note(out, 'Loading…');
+    clearHistory();
     if (chart) chart.clear();
     state.horse = null;
     if (chatPanel) chatPanel.refresh();
@@ -375,6 +418,7 @@ function createGrid(root, ds) {
 
       data.rows.forEach((r) => {
         const tr = document.createElement('tr');
+        const horse = r[horseAt];
         r.forEach((v, i) => {
           const td = document.createElement('td');
           if (v === null) { td.textContent = '—'; td.className = 'null'; }
@@ -382,9 +426,18 @@ function createGrid(root, ds) {
             td.textContent = v;
             if (NUMERIC.has(data.columns[i].type)) td.className = 'num';
           }
+          if (i === horseAt && horse) {
+            td.classList.add('rc-horse');
+            td.title = `${horse}\n\nRight-click for this horse's previous races`;
+            td.oncontextmenu = (e) => {
+              e.preventDefault();
+              openMenu(e.clientX, e.clientY, [
+                ['Show history', () => showHistory(horse)],
+              ]);
+            };
+          }
           tr.append(td);
         });
-        const horse = r[horseAt];
         if (chart && horse) {
           tr.classList.add('pickable');
           tr.onclick = () => selectHorse(horse);
@@ -420,6 +473,79 @@ function createGrid(root, ds) {
       });
       chart.show(await getJSON('/api/horseform?' + q));
     } catch (e) {
+      banner(e.message);
+    }
+  }
+
+  function clearHistory() {
+    const out = root.querySelector('.hh-out');
+    if (out) out.textContent = '';
+  }
+
+  /** List a runner's previous races in a table beneath the card. */
+  async function showHistory(horse) {
+    const out = root.querySelector('.hh-out');
+    const pick = state.selected;
+    if (!out || !pick) return;
+    note(out, 'Loading…');
+    try {
+      const data = await getJSON('/api/horsehistory?' + new URLSearchParams({ date: pick.date, horse }));
+      out.textContent = '';
+      const h3 = document.createElement('h3');
+      h3.className = 'rc-title';
+      h3.append(document.createTextNode(`${horse} — history `));
+      const count = document.createElement('span');
+      count.className = 'hint';
+      count.textContent = `${data.rows.length} previous ${data.rows.length === 1 ? 'race' : 'races'}`;
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'hh-close ghost';
+      close.title = 'Close history';
+      close.setAttribute('aria-label', 'Close history');
+      close.textContent = '×';
+      close.onclick = clearHistory;
+      h3.append(count, close);
+      out.append(h3);
+
+      if (!data.rows.length) {
+        const p = document.createElement('p');
+        p.className = 'hint';
+        p.textContent = 'No earlier races recorded for this horse.';
+        out.append(p);
+        return;
+      }
+
+      // through the DOM, as the card is: track and jockey come from the database
+      const table = document.createElement('table');
+      table.className = 'rc-table grid';
+      const thead = document.createElement('thead');
+      const hrow = document.createElement('tr');
+      for (const c of data.columns) {
+        const th = document.createElement('th');
+        th.textContent = c.label;
+        th.title = `${c.label}\n\n${c.desc || `${c.name} (${c.type})`}`;
+        hrow.append(th);
+      }
+      thead.append(hrow);
+      const tbody = document.createElement('tbody');
+      for (const r of data.rows) {
+        const tr = document.createElement('tr');
+        r.forEach((v, i) => {
+          const td = document.createElement('td');
+          if (v === null) { td.textContent = '—'; td.className = 'null'; }
+          else {
+            td.textContent = v;
+            if (NUMERIC.has(data.columns[i].type)) td.className = 'num';
+          }
+          tr.append(td);
+        });
+        tbody.append(tr);
+      }
+      table.append(thead, tbody);
+      out.append(table);
+      out.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } catch (e) {
+      out.textContent = '';
       banner(e.message);
     }
   }

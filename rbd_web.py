@@ -771,6 +771,68 @@ def horseform(request: Request):
     }
 
 
+# A horse's previous races, for "Show history" on a race card runner. The
+# fields are the ticket's own list, in its order, as (db column, label).
+HISTORY_FIELDS = [
+    ("race_date", "Date"),
+    ("race_time", "Time"),
+    ("track", "Track"),
+    ("going", "Going"),
+    ("distance", "Distance"),
+    ("class", "Class"),
+    ("jockey", "Jockey"),
+    ("place", "Place"),
+]
+
+
+@app.get("/api/horsehistory")
+def horsehistory(request: Request):
+    """Every race one horse ran before the selected one, most recent first.
+
+    Unlike the card's form stats this is not limited to the race's own type and
+    distance: it is the horse's whole record, as a form book would list it. The
+    races table only holds a race's date, track, time, type and distance, so the
+    going, class, jockey and place come from the horse's prerace_form rows --
+    the same rows the races table is built out of.
+    """
+    day = (request.query_params.get("date") or "").strip()
+    horse = (request.query_params.get("horse") or "").strip()
+    if not (day and horse):
+        raise HTTPException(400, "date and horse are both required")
+    return horse_history(horse, day)
+
+
+def horse_history(horse, day):
+    """The body of /api/horsehistory, callable without a Request."""
+    cols = ", ".join(f'"{c}"' for c, _ in HISTORY_FIELDS)
+    sql = f"""
+        -- one row per race, as on the card. Which copy is kept matters here:
+        -- the row from the card a race was declared on was written before it
+        -- was run, so it has no place and the going is the forecast. Any later
+        -- card that carries the run has the result, so prefer one of those,
+        -- the newest; the declaration row is only used when it is all there is
+        -- (the race was on the newest loaded card, or the horse was withdrawn).
+        SELECT {cols} FROM (
+            SELECT DISTINCT ON (race_date, track, race_time) *
+            FROM {PRERACE_TABLE}
+            WHERE horse = ?
+              -- strictly earlier, so the race being viewed is not its own history
+              AND race_date < TRY_CAST(? AS DATE)
+            ORDER BY race_date, track, race_time,
+                     prerace_date = race_date, prerace_date DESC
+        )
+        ORDER BY race_date DESC, race_time DESC
+    """
+    rows = db().execute(sql, [horse, day]).fetchall()
+    return {
+        "horse": horse,
+        "columns": [{"name": c, "label": l, "type": PRERACE_TYPE[c],
+                     "desc": describe(PRERACE_TABLE, c, PRERACE_TYPE[c])}
+                    for c, l in HISTORY_FIELDS],
+        "rows": [[cell(v) for v in r] for r in rows],
+    }
+
+
 # ------------------------------------------------------------------- agent ---
 #
 # Endpoints meant to be called by an AI agent rather than by the page.
