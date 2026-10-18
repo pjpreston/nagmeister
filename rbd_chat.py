@@ -124,10 +124,10 @@ TOOLS = [
         "name": "get_race_card",
         "description": (
             "The runners in one race, in market order, each with its record "
-            "over this race's own race type and distance: number of previous "
-            "such races, wins, last/average/median finishing position, the "
-            "return from backing it with GBP 1 each time, and how far behind "
-            "the winner it has finished. This is the tool for questions about "
+            "over every race it has run before this one: number of previous "
+            "races, wins, last/average/median finishing position, the profit "
+            "or loss from backing it with GBP 1 to win each time (stakes "
+            "lost included), and how far behind the winner it has finished. This is the tool for questions about "
             "who is likely to win a specific race. The field is complete only "
             "for races on the newest card: for an earlier race, runners "
             "declared again since are left out and the result says "
@@ -277,9 +277,10 @@ were the whole race, and never conclude that a horse did not run because it is \
 missing from an old card.
 
 When asked who will win a race, call get_race_card for that race and reason \
-from what it returns: the runners' records at this exact race type and \
-distance, their strike rate, their finishing positions, and what backing them \
-has returned. Say which runners the numbers favour and why, in terms a reader \
+from what it returns: the runners' records over all their previous races, \
+their strike rate, their finishing positions, and the profit or loss from \
+backing them. Those records mix every race type and distance, so check \
+get_horse_form for how a horse has done at this race's own type and trip. Say which runners the numbers favour and why, in terms a reader \
 can check against the card in front of them.
 
 Be straight about the limits of what you looked at. A horse with two previous \

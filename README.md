@@ -395,13 +395,14 @@ from its newest card only (see [One copy of each horse](#one-copy-of-each-horse)
 
 #### Form on the card
 
-Each runner also carries its record **over this race's own race type and
-distance**, so the card reads as form rather than a list of names:
+Each runner also carries its record **over every race it ran before this one**,
+whatever the race type and distance, so the card reads as form rather than a
+list of names:
 
 | Column | Meaning |
 | --- | --- |
-| `£1 invest` | what £1 to win on every one of those races would have returned |
-| `#Races` | qualifying races the horse has run before this one |
+| `£1 invest` | profit or loss from £1 to win on every one of those races |
+| `#Races` | races the horse has run before this one |
 | `#Wins` | how many of those it won (`Place` = 1) |
 | `Last Plc` | finishing position in the most recent one |
 | `Avg Plc` | mean finishing position |
@@ -411,17 +412,26 @@ distance**, so the card reads as form rather than a list of names:
 | `AvgWinDistLen` | mean lengths behind |
 | `MedWinDistLen` | median lengths behind |
 
-Same race type *and* distance is what makes these worth reading — a horse's
-record over 5f handicaps says little about how it goes over 2m hurdles. About
-half the runners on a card have no qualifying history at all and show `—`;
-maidens and first-season two-year-olds mostly have none by definition.
+Until SCRUM-36 these counted only races of the same type *and* distance as the
+one being viewed; they now cover the horse's whole record. Only a horse with no
+previous run — a debutant — shows `—`. Show history lists exactly the runs they
+summarise.
 
-`£1 invest` is a running total, not an average: it answers "what would backing
-this horse in all of these races have paid". `industry_sp` is already decimal
-and stake-inclusive, so a winner at `6.0` contributes £6 and everything else
-contributes nothing. A horse that has never won one of these shows `0.0` — so
-comparing it against `#Races`, the notional stake, says whether the horse has
-been worth backing at this type and distance.
+`£1 invest` is a running total, not an average: it answers "where would £1 to
+win on this horse in every one of those races have left me". It is profit or
+loss, stakes included. `industry_sp` is decimal and stake-inclusive, so a winner
+at `6.0` returns £6, which is £5 profit once the stake is taken off, and every
+other run loses its £1. A horse that has never won shows `-#Races`, and `0.0`
+means it broke even. A winner with no SP recorded (12 of about 49,000) has no
+knowable profit and is left out of the total.
+
+Right-click a `£1 invest` cell and choose **Calculation** to see how it is worked
+out, beneath the card: one row per previous race, oldest first, with the place,
+industry SP, the £1 stake, what came back, the profit or loss and a running total
+that ends on the figure in the cell, then the sum written out — `16 × £1 staked
+= £16.00. 5 wins returned £140.21. £140.21 − £16.00 = £124.21`. It reads the same
+rows the column sums (`/api/horseform`), so the two cannot disagree. It shares
+the space beneath the card with Show history; opening one replaces the other.
 
 The `WinDistLen` group reads `Winning Distance`, which in `prerace_form` is how
 far **that horse** finished behind the winner — not the winner's margin. It uses
@@ -455,9 +465,10 @@ past race lists just the horses for whom this is still that card.
 
 Right-click a horse's name on the card and choose **Show history** to list every
 race it ran before this one, most recent first, beneath the card: date, time,
-track, going, distance, class, jockey and the place it finished. Unlike the
-form columns this is the horse's whole record, not just races of this type and
-distance. **×** closes it; viewing another card clears it.
+track, race type, going, distance, class, jockey, industry SP and the place it
+finished.
+These are the runs the card's form columns summarise. **×** closes it; viewing
+another card clears it.
 
 It comes from `/api/horsehistory?date=&horse=`. The `races` table only holds a
 race's date, track, time, type and distance, so the going, class, jockey and
@@ -481,7 +492,7 @@ empty frame waiting to be clicked.
 | Metric | What it plots |
 | --- | --- |
 | `Place` | finishing position (default) |
-| `£1 invest` | the return from that one race — the individual values the card's total sums |
+| `£1 invest` | profit or loss from £1 to win on that one race (SP − 1 if it won, −1 if not) — the individual values the card's total sums |
 | `Winning Distance` | lengths behind the winner |
 | `Industry SP` | the price each time, so a shortening market shows as a fall |
 | `Official Rating` | the handicapper's own assessment |
@@ -491,13 +502,13 @@ The last three are not in the ticket. They are there because "is this horse
 going the right way" is the question the graph exists to answer, and finishing
 position alone cannot say: 3rd of 4 and 3rd of 20 plot identically.
 
-Points come from `/api/horseform?date=&track=&time=&horse=`, which applies the
-same "similar race" rule as the card and returns the individual rows the card
-aggregates — so a point on the graph is always one of the runs the card counted,
+Points come from `/api/horseform?date=&track=&time=&horse=`, which takes the
+same runs as the card — every race before this one — and returns the individual
+rows the card aggregates — so a point on the graph is always one of the runs the card counted,
 and ticking `£1 invest` plots exactly the values behind its total.
 
 **Small multiples, one panel per metric, never a shared y axis.** `Place` runs
-1–30, `£1 invest` 0–500 and `Winning Distance` 0–240 lengths. Sharing an axis
+1–30, `£1 invest` −1 to +50 or more and `Winning Distance` 0–240 lengths. Sharing an axis
 would flatten whichever is smaller into a line along the bottom, and giving each
 its own axis on one plot invents a correlation that is not in the data. Stacked
 panels on a common time axis compare the shapes honestly and keep every axis
@@ -709,7 +720,7 @@ answer that read the data from one that did not:
 | --- | --- |
 | `list_card_dates` | which race days are held, and how many races each has |
 | `list_races` | the races on one day |
-| `get_race_card` | the runners in one race with their record at that race type and distance — the tool for "who wins this?" |
+| `get_race_card` | the runners in one race with their record over all their previous races — the tool for "who wins this?" |
 | `get_horse_form` | one horse's past runs from `prerace_form` |
 | `get_horse_results` | the same horse's results from `race_results` |
 
