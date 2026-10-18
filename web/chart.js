@@ -1,10 +1,10 @@
 'use strict';
 
-// The form graph under the race card: one horse's qualifying past races
+// The form graph under the race card: one horse's past races
 // plotted against the date they were run.
 //
 // Small multiples rather than one plot with several lines. Place runs 1..30,
-// £1 invest 0..500 and Winning Distance 0..240 lengths, so sharing a y axis
+// £1 invest -1..+50 and Winning Distance 0..240 lengths, so sharing a y axis
 // would flatten whichever is smaller into a line along the bottom, and giving
 // each its own axis on one plot invents a correlation that is not in the data.
 // One stacked panel per metric, all on the same time axis, compares the shapes
@@ -118,7 +118,7 @@
       if (!pts.length) {
         const p = document.createElement('p');
         p.className = 'hint';
-        p.textContent = 'No previous races at this race type and distance.';
+        p.textContent = 'No previous races.';
         plot.append(p);
         return;
       }
@@ -345,7 +345,7 @@
         data = payload;
         if (!chosen.size) chosen = new Set([payload.default]);
         head.textContent =
-          `${payload.horse} — ${payload.points.length} previous race(s) at this type and distance`;
+          `${payload.horse} — ${payload.points.length} previous race(s)`;
         buildBoxes();
         draw();
       },

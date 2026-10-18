@@ -183,10 +183,11 @@ COLUMN_DESC = {
 
     # The race card's computed columns. Their aliases are unique to the card, so
     # they can live here rather than in a second dictionary. Every one is over
-    # the horse's *previous* races of this race's own type and distance.
-    "one_pnd_invest": ("Total return from £1 to win on this horse in every one of "
-                       "those races. Read against #Races, the notional stake"),
-    "n_races": "Races of this type and distance the horse has run before this one",
+    # all the horse's races before this one.
+    "one_pnd_invest": ("Profit or loss from £1 to win on this horse in every one of "
+                       "those races: the SP less the stake when it won, minus the "
+                       "£1 stake when it did not. 0 means it broke even"),
+    "n_races": "Races the horse has run before this one",
     "n_wins": "How many of those it won",
     "last_plc": "Finishing position in the most recent of those races",
     "avg_plc": ("Mean finishing position over those races. Runs where it did not "
@@ -322,21 +323,15 @@ RACECARD_FIELDS = [
     ("industry_sp", "Industry SP"),
 ]
 
-# Per-horse form at this race's own race type and distance, from prerace_form.
+# Per-horse form over every race the horse ran before the selected one, from
+# prerace_form, whatever its type and distance.
 #
-# "Similar race" is same race_type AND same distance, which is what makes these
-# worth reading: a horse's record over 5f handicaps says little about how it
-# goes over 2m hurdles. Only runs *before* the selected race count.
-#
-# (alias, label, type, aggregate over the horse's qualifying past runs)
+# (alias, label, type, aggregate over the horse's past runs)
 RACECARD_STATS = [
-    # What £1 to win on this horse, every time it ran one of these races, would
-    # have come back. industry_sp is already decimal and stake-inclusive, so a
-    # winner at 6.0 returns 6 and everything else returns nothing. Summed, not
-    # averaged: the question is what the whole sequence of bets paid, so a horse
-    # that has never won one of these reads 0.0 rather than empty.
-    ("one_pnd_invest", "£1 invest", "DOUBLE",
-     "round(sum(CASE WHEN place = '1' THEN industry_sp ELSE 0 END), 2)"),
+    # Where £1 to win on this horse in every one of those races would have left
+    # you: profit or loss, not the gross return. See BET_PL. Summed, not
+    # averaged: the question is what the whole sequence of bets paid.
+    ("one_pnd_invest", "£1 invest", "DOUBLE", "round(sum(bet_pl), 2)"),
     ("n_races", "#Races", "INTEGER", "count(*)"),
     ("n_wins", "#Wins", "INTEGER", "count(*) FILTER (WHERE place = '1')"),
     # most recent finishing position. Kept as text because it can be 'PU', and
@@ -356,6 +351,14 @@ RACECARD_STATS = [
     ("med_win_dist_len", "MedWinDistLen", "DOUBLE", "round(median(win_dist_len), 2)"),
 ]
 
+# Profit or loss on one £1 win bet, per past run. industry_sp is decimal and
+# stake-inclusive, so a winner at 6.0 returns £6 -- £5 profit once the stake is
+# taken off -- and anything else loses the £1. Shared by the card's £1 invest
+# column and the graph, so a point on the graph is always one of the values the
+# column sums. A winner with no SP recorded (12 of ~49k) has no knowable
+# profit and stays NULL, which sum() and the graph both skip.
+BET_PL = "CASE WHEN f.place = '1' THEN f.industry_sp - 1 ELSE -1 END"
+
 # How far behind the winner this row finished, in lengths. Shared by the card's
 # WinDistLen columns and the graph, so the two cannot disagree. The winner is
 # none behind, so its empty Winning Distance reads as 0 rather than unknown; a
@@ -364,8 +367,8 @@ WIN_DIST_LEN = (
     f"CASE WHEN f.place = '1' THEN 0.0 ELSE {lengths_sql('f.winning_distance')} END"
 )
 
-# The graph beneath the card: one point per qualifying past race, plotted
-# against the date it was run.
+# The graph beneath the card: one point per past race, plotted against the date
+# it was run.
 #
 # Every one of these is a column of the same `form` rows the card aggregates, so
 # a point on the graph is always one of the runs the card counted -- select
@@ -379,9 +382,8 @@ WIN_DIST_LEN = (
 # (name, label, better, per-row expression over the form CTE)
 HORSE_METRICS = [
     ("place", "Place", "lower", "TRY_CAST(place AS DOUBLE)"),
-    # the individual returns that one_pnd_invest above sums
-    ("invest", "£1 invest", "higher",
-     "CASE WHEN place = '1' THEN industry_sp ELSE 0 END"),
+    # the individual profits and losses that one_pnd_invest above sums
+    ("invest", "£1 invest", "higher", "bet_pl"),
     ("win_dist_len", "Winning Distance", "lower", "win_dist_len"),
     # The three below are not in the ticket. They are here because the question
     # the graph exists to answer is "is this horse going the right way", and a
@@ -407,8 +409,9 @@ DEFAULT_METRIC = "place"
 # position it finished in this one".
 HORSE_METRIC_DESC = {
     "place": "Where it finished in each race. Runs it did not finish have no point",
-    "invest": ("What £1 to win returned on each race: the starting price if it won, "
-               "otherwise 0. These are the values the card's £1 invest totals"),
+    "invest": ("Profit or loss from £1 to win on each race: the starting price less "
+               "the stake if it won, otherwise -1. These are the values the card's "
+               "£1 invest totals"),
     "win_dist_len": "How far it finished behind the winner, in lengths. 0 where it won",
     "industry_sp": "Its starting price each time, so a shortening market falls",
     "official_rating": "The handicapper's rating at the time of each run",
@@ -621,9 +624,9 @@ def racecard(request: Request):
     only the runners not declared again since are left, and a race whose whole
     field has run again has none. `complete` says which kind of card this is.
 
-    Each runner also carries its record over this race's own race type and
-    distance (RACECARD_STATS), so the card can be read as form rather than just
-    a list of names.
+    Each runner also carries its record over every race it ran before this one
+    (RACECARD_STATS), so the card can be read as form rather than just a list
+    of names.
     """
     day = (request.query_params.get("date") or "").strip()
     track = (request.query_params.get("track") or "").strip()
@@ -646,11 +649,7 @@ def race_card(day, track, time_):
     )
     stat_cols = ", ".join(f"s.{alias}" for alias, _, _, _ in RACECARD_STATS)
     sql = f"""
-        WITH race AS (
-            SELECT race_type, distance FROM {RACES_TABLE}
-            WHERE race_date = TRY_CAST(? AS DATE)
-              AND track = ? AND race_time = TRY_CAST(? AS TIME)
-        ),
+        WITH
         -- prerace_date = race_date restricts this to the card the race was
         -- declared on, which is also how the races table itself is built: the
         -- declaration row, with the morning's SP, rather than the same run
@@ -673,11 +672,10 @@ def race_card(day, track, time_):
             SELECT DISTINCT ON (f.horse, f.race_date, f.track, f.race_time)
                    f.horse, f.race_date, f.race_time, f.track, f.place,
                    f.industry_sp,
+                   {BET_PL} AS bet_pl,
                    {WIN_DIST_LEN} AS win_dist_len
-            FROM {PRERACE_TABLE} f, race
+            FROM {PRERACE_TABLE} f
             WHERE f.horse IN (SELECT horse FROM runners)
-              AND f.race_type = race.race_type
-              AND f.distance = race.distance
               -- strictly earlier races only. The ticket describes this as
               -- "rows - 1", which excludes the horse's row for today; going by
               -- date is the same thing, and stays right if a horse is ever held
@@ -697,7 +695,7 @@ def race_card(day, track, time_):
         ORDER BY r.industry_sp NULLS LAST, r.horse
     """
     cur = db()
-    rows = cur.execute(sql, [day, track, time_, day, track, time_, day]).fetchall()
+    rows = cur.execute(sql, [day, track, time_, day]).fetchall()
     return {
         "race": {"date": day, "track": track, "time": time_},
         "columns": [{"name": c, "label": l, "type": PRERACE_TYPE.get(c, "VARCHAR"),
@@ -731,10 +729,9 @@ def card_complete(day, track, time_):
 
 @app.get("/api/horseform")
 def horseform(request: Request):
-    """One horse's qualifying past races, as a time series for the graph.
+    """One horse's past races, as a time series for the graph.
 
-    Same race, same "similar race" rule and same per-row values as
-    /api/racecard -- this returns the individual rows that endpoint aggregates,
+    Same race, same runs and same per-row values as /api/racecard -- this returns the individual rows that endpoint aggregates,
     oldest first, so a point on the graph is always one of the runs the card
     counted.
 
@@ -754,21 +751,15 @@ def horseform(request: Request):
     )
     names = ", ".join(name for name, _, _, _ in HORSE_METRICS)
     sql = f"""
-        WITH race AS (
-            SELECT race_type, distance FROM {RACES_TABLE}
-            WHERE race_date = TRY_CAST(? AS DATE)
-              AND track = ? AND race_time = TRY_CAST(? AS TIME)
-        ),
         -- one row per past race; see /api/racecard for why DISTINCT ON
-        form AS (
+        WITH form AS (
             SELECT DISTINCT ON (f.race_date, f.track, f.race_time)
                    f.race_date, f.race_time, f.track, f.place, f.industry_sp,
                    f.official_rating, f.prb,
+                   {BET_PL} AS bet_pl,
                    {WIN_DIST_LEN} AS win_dist_len
-            FROM {PRERACE_TABLE} f, race
+            FROM {PRERACE_TABLE} f
             WHERE f.horse = ?
-              AND f.race_type = race.race_type
-              AND f.distance = race.distance
               AND f.race_date < TRY_CAST(? AS DATE)
             ORDER BY f.race_date, f.track, f.race_time, f.prerace_date
         )
@@ -777,7 +768,7 @@ def horseform(request: Request):
         FROM form ORDER BY race_date, race_time
     """
     cur = db()
-    rows = cur.execute(sql, [day, track, time_, horse, day]).fetchall()
+    rows = cur.execute(sql, [horse, day]).fetchall()
     return {
         "horse": horse,
         "race": {"date": day, "track": track, "time": time_},
@@ -794,11 +785,13 @@ def horseform(request: Request):
 
 
 # A horse's previous races, for "Show history" on a race card runner. The
-# fields are the ticket's own list, in its order, as (db column, label).
+# fields are the tickets' own list (SCRUM-34, plus Racetype from SCRUM-36), in
+# their order, as (db column, label).
 HISTORY_FIELDS = [
     ("race_date", "Date"),
     ("race_time", "Time"),
     ("track", "Track"),
+    ("race_type", "Racetype"),
     ("going", "Going"),
     ("distance", "Distance"),
     ("class", "Class"),
@@ -811,10 +804,10 @@ HISTORY_FIELDS = [
 def horsehistory(request: Request):
     """Every race one horse ran before the selected one, most recent first.
 
-    Unlike the card's form stats this is not limited to the race's own type and
-    distance: it is the horse's whole record, as a form book would list it. The
-    races table only holds a race's date, track, time, type and distance, so the
-    going, class, jockey and place come from the horse's prerace_form rows,
+    The horse's whole record, as a form book would list it -- the same runs the
+    card's form columns summarise. The races table only holds a race's date,
+    track, time, type and distance, so the going, class, jockey and place come
+    from the horse's prerace_form rows,
     which since a horse is kept from its newest card only all come from that
     card -- written after every one of these runs, so they carry the results.
     """
