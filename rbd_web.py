@@ -785,8 +785,8 @@ def horseform(request: Request):
 
 
 # A horse's previous races, for "Show history" on a race card runner. The
-# fields are the tickets' own list (SCRUM-34, plus Racetype from SCRUM-36), in
-# their order, as (db column, label).
+# fields are the tickets' own list (SCRUM-34, plus Racetype and Industry SP
+# from SCRUM-36), in their order, as (db column, label).
 HISTORY_FIELDS = [
     ("race_date", "Date"),
     ("race_time", "Time"),
@@ -796,6 +796,7 @@ HISTORY_FIELDS = [
     ("distance", "Distance"),
     ("class", "Class"),
     ("jockey", "Jockey"),
+    ("industry_sp", "Industry SP"),
     ("place", "Place"),
 ]
 

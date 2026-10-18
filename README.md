@@ -457,7 +457,8 @@ past race lists just the horses for whom this is still that card.
 
 Right-click a horse's name on the card and choose **Show history** to list every
 race it ran before this one, most recent first, beneath the card: date, time,
-track, race type, going, distance, class, jockey and the place it finished.
+track, race type, going, distance, class, jockey, industry SP and the place it
+finished.
 These are the runs the card's form columns summarise. **×** closes it; viewing
 another card clears it.
 
