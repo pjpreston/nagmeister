@@ -322,7 +322,7 @@ function createGrid(root, ds) {
     const btn = root.querySelector('.rc-view');
     const hint = root.querySelector('.rc-hint');
     if (out) out.innerHTML = '';
-    clearHistory();
+    clearDetail();
     if (btn) btn.disabled = true;
     if (hint) hint.textContent = 'Select a race above.';
     reload();
@@ -379,7 +379,7 @@ function createGrid(root, ds) {
     const pick = state.selected;
     if (!out || !pick) return;
     note(out, 'Loading…');
-    clearHistory();
+    clearDetail();
     if (chart) chart.clear();
     state.horse = null;
     if (chatPanel) chatPanel.refresh();
@@ -423,6 +423,7 @@ function createGrid(root, ds) {
       thead.append(hrow);
       const tbody = document.createElement('tbody');
       const horseAt = data.columns.findIndex((c) => c.name === 'horse');
+      const investAt = data.columns.findIndex((c) => c.name === 'one_pnd_invest');
 
       data.rows.forEach((r) => {
         const tr = document.createElement('tr');
@@ -441,6 +442,15 @@ function createGrid(root, ds) {
               e.preventDefault();
               openMenu(e.clientX, e.clientY, [
                 ['Show history', () => showHistory(horse)],
+              ]);
+            };
+          }
+          if (i === investAt && horse) {
+            td.title = `£1 invest: ${v === null ? '—' : v}\n\nRight-click to see how it is worked out`;
+            td.oncontextmenu = (e) => {
+              e.preventDefault();
+              openMenu(e.clientX, e.clientY, [
+                ['Calculation', () => showCalculation(horse, v)],
               ]);
             };
           }
@@ -485,9 +495,69 @@ function createGrid(root, ds) {
     }
   }
 
-  function clearHistory() {
+  // The slot beneath the card holds one detail at a time -- a runner's history
+  // or the working behind its £1 invest -- so opening one replaces the other.
+  function clearDetail() {
     const out = root.querySelector('.hh-out');
     if (out) out.textContent = '';
+  }
+
+  /** Empty the detail slot and give it a heading with a close button. */
+  function detailHead(out, title, hint) {
+    out.textContent = '';
+    const h3 = document.createElement('h3');
+    h3.className = 'rc-title';
+    h3.append(document.createTextNode(title + ' '));
+    const count = document.createElement('span');
+    count.className = 'hint';
+    count.textContent = hint;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'hh-close ghost';
+    close.title = 'Close';
+    close.setAttribute('aria-label', 'Close');
+    close.textContent = '×';
+    close.onclick = clearDetail;
+    h3.append(count, close);
+    out.append(h3);
+  }
+
+  function detailHint(out, msg) {
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = msg;
+    out.append(p);
+  }
+
+  /** A read-only table, built through the DOM: names come from the database. */
+  function detailTable(columns, rows) {
+    const table = document.createElement('table');
+    table.className = 'rc-table grid';
+    const thead = document.createElement('thead');
+    const hrow = document.createElement('tr');
+    for (const c of columns) {
+      const th = document.createElement('th');
+      th.textContent = c.label;
+      th.title = `${c.label}\n\n${c.desc || `${c.name} (${c.type})`}`;
+      hrow.append(th);
+    }
+    thead.append(hrow);
+    const tbody = document.createElement('tbody');
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      r.forEach((v, i) => {
+        const td = document.createElement('td');
+        if (v === null) { td.textContent = '—'; td.className = 'null'; }
+        else {
+          td.textContent = v;
+          if (NUMERIC.has(columns[i].type)) td.className = 'num';
+        }
+        tr.append(td);
+      });
+      tbody.append(tr);
+    }
+    table.append(thead, tbody);
+    return table;
   }
 
   /** List a runner's previous races in a table beneath the card. */
@@ -498,59 +568,95 @@ function createGrid(root, ds) {
     note(out, 'Loading…');
     try {
       const data = await getJSON('/api/horsehistory?' + new URLSearchParams({ date: pick.date, horse }));
+      const n = data.rows.length;
+      detailHead(out, `${horse} — history`, `${n} previous ${n === 1 ? 'race' : 'races'}`);
+      if (!n) {
+        detailHint(out, 'No earlier races recorded for this horse.');
+        return;
+      }
+      out.append(detailTable(data.columns, data.rows));
+      out.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } catch (e) {
       out.textContent = '';
-      const h3 = document.createElement('h3');
-      h3.className = 'rc-title';
-      h3.append(document.createTextNode(`${horse} — history `));
-      const count = document.createElement('span');
-      count.className = 'hint';
-      count.textContent = `${data.rows.length} previous ${data.rows.length === 1 ? 'race' : 'races'}`;
-      const close = document.createElement('button');
-      close.type = 'button';
-      close.className = 'hh-close ghost';
-      close.title = 'Close history';
-      close.setAttribute('aria-label', 'Close history');
-      close.textContent = '×';
-      close.onclick = clearHistory;
-      h3.append(count, close);
-      out.append(h3);
+      banner(e.message);
+    }
+  }
 
-      if (!data.rows.length) {
-        const p = document.createElement('p');
-        p.className = 'hint';
-        p.textContent = 'No earlier races recorded for this horse.';
-        out.append(p);
+  const money = (x) => (x < 0 ? '−£' : '£') + Math.abs(x).toFixed(2);
+
+  /**
+   * Show how a runner's £1 invest is worked out: one £1 win bet per previous
+   * race, with its stake, return and profit, and a running total that ends on
+   * the figure in the card.
+   *
+   * Read from /api/horseform, whose rows are the very runs the card sums and
+   * whose `invest` value is each one's profit or loss -- so the bottom line
+   * here cannot disagree with the cell. `shown` is the cell's own value, to
+   * check against.
+   */
+  async function showCalculation(horse, shown) {
+    const out = root.querySelector('.hh-out');
+    const pick = state.selected;
+    if (!out || !pick) return;
+    note(out, 'Loading…');
+    try {
+      const q = new URLSearchParams({ date: pick.date, track: pick.track, time: pick.time, horse });
+      const { points } = await getJSON('/api/horseform?' + q);
+      detailHead(out, `${horse} — £1 invest calculation`,
+        `${points.length} previous ${points.length === 1 ? 'race' : 'races'}`);
+      if (!points.length) {
+        detailHint(out, 'No previous races, so no bets to add up: the cell is empty.');
         return;
       }
 
-      // through the DOM, as the card is: track and jockey come from the database
-      const table = document.createElement('table');
-      table.className = 'rc-table grid';
-      const thead = document.createElement('thead');
-      const hrow = document.createElement('tr');
-      for (const c of data.columns) {
-        const th = document.createElement('th');
-        th.textContent = c.label;
-        th.title = `${c.label}\n\n${c.desc || `${c.name} (${c.type})`}`;
-        hrow.append(th);
+      detailHint(out, 'A £1 bet to win on every previous race. Industry SP is decimal '
+        + 'odds with the stake included, so a winner at 6.0 returns £6 — £5 profit — '
+        + 'and any other result loses the £1 stake.');
+
+      let staked = 0, returned = 0, total = 0, wins = 0, unknown = 0;
+      const rows = points.map((p) => {
+        const pl = p.values.invest;
+        const sp = p.values.industry_sp;
+        const won = p.place_text === '1';
+        if (pl === null) {
+          // a winner with no SP recorded: its profit cannot be known, so it is
+          // left out of the total -- stake included -- as the card leaves it out
+          unknown += 1;
+          return [p.date, p.track, p.place_text, sp, '—', '—', 'not counted', money(total)];
+        }
+        staked += 1;
+        total += pl;
+        if (won) { wins += 1; returned += pl + 1; }
+        return [p.date, p.track, p.place_text, sp === null ? null : sp.toFixed(2),
+          money(1), money(won ? pl + 1 : 0), money(pl), money(total)];
+      });
+      const cols = [
+        { name: 'race_date', label: 'Date', type: 'DATE', desc: 'Date of the race' },
+        { name: 'track', label: 'Track', type: 'VARCHAR', desc: 'Racecourse' },
+        { name: 'place', label: 'Place', type: 'VARCHAR', desc: 'Where it finished; 1 is a win' },
+        { name: 'industry_sp', label: 'Industry SP', type: 'DOUBLE', desc: 'Decimal starting price, stake included' },
+        { name: 'stake', label: 'Stake', type: 'DOUBLE', desc: 'The £1 bet on this race' },
+        { name: 'return', label: 'Return', type: 'DOUBLE', desc: 'What came back: the SP if it won, otherwise nothing' },
+        { name: 'pl', label: 'Profit/Loss', type: 'DOUBLE', desc: 'Return less stake: SP − 1 for a win, −1 otherwise' },
+        { name: 'running', label: 'Running total', type: 'DOUBLE', desc: 'Profit or loss so far, oldest race first' },
+      ];
+      out.append(detailTable(cols, rows));
+
+      const sum = document.createElement('p');
+      sum.className = 'calc-sum';
+      sum.textContent = `${staked} × £1 staked = ${money(staked)}.  `
+        + `${wins} ${wins === 1 ? 'win' : 'wins'} returned ${money(returned)}.  `
+        + `${money(returned)} − ${money(staked)} = ${money(total)}`;
+      out.append(sum);
+      if (unknown) {
+        detailHint(out, `${unknown} winning ${unknown === 1 ? 'run has' : 'runs have'} no SP `
+          + 'recorded, so its profit cannot be known and it is left out, stake and all.');
       }
-      thead.append(hrow);
-      const tbody = document.createElement('tbody');
-      for (const r of data.rows) {
-        const tr = document.createElement('tr');
-        r.forEach((v, i) => {
-          const td = document.createElement('td');
-          if (v === null) { td.textContent = '—'; td.className = 'null'; }
-          else {
-            td.textContent = v;
-            if (NUMERIC.has(data.columns[i].type)) td.className = 'num';
-          }
-          tr.append(td);
-        });
-        tbody.append(tr);
+      // the card rounds to 2dp; anything more than a rounding step apart means
+      // the two are no longer reading the same runs, which should never happen
+      if (shown !== null && Math.abs(Number(shown) - total) > 0.011) {
+        detailHint(out, `This does not match the card's ${money(Number(shown))} — reload the card.`);
       }
-      table.append(thead, tbody);
-      out.append(table);
       out.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     } catch (e) {
       out.textContent = '';

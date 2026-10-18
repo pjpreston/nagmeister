@@ -425,6 +425,14 @@ other run loses its £1. A horse that has never won shows `-#Races`, and `0.0`
 means it broke even. A winner with no SP recorded (12 of about 49,000) has no
 knowable profit and is left out of the total.
 
+Right-click a `£1 invest` cell and choose **Calculation** to see how it is worked
+out, beneath the card: one row per previous race, oldest first, with the place,
+industry SP, the £1 stake, what came back, the profit or loss and a running total
+that ends on the figure in the cell, then the sum written out — `16 × £1 staked
+= £16.00. 5 wins returned £140.21. £140.21 − £16.00 = £124.21`. It reads the same
+rows the column sums (`/api/horseform`), so the two cannot disagree. It shares
+the space beneath the card with Show history; opening one replaces the other.
+
 The `WinDistLen` group reads `Winning Distance`, which in `prerace_form` is how
 far **that horse** finished behind the winner — not the winner's margin. It uses
 the same parser as `race_results.win_dist_len` (`lengths_sql` in

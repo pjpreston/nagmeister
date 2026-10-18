@@ -272,6 +272,9 @@ tbody tr.selected > td:first-child {
 .hh-out { margin-top: 18px; overflow-x: auto; padding-bottom: 2px; }
 .hh-out:empty { display: none; }
 .hh-close { margin-left: 8px; padding: 0 7px; line-height: 1.3; font-size: 14px; }
+.hh-out > .hint { margin: 0 0 8px; max-width: 80ch; }
+/* the bottom line of a £1 invest calculation: the figure the card shows */
+.calc-sum { margin: 8px 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .ctxmenu {
   position: fixed; z-index: 20; min-width: 140px; padding: 4px;
