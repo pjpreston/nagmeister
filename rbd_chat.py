@@ -103,7 +103,9 @@ TOOLS = [
         "description": (
             "List the race days held in the database, newest first, with how "
             "many races each day has. Start here when the user does not say "
-            "which day they mean."
+            "which day they mean. Only the newest day has complete race cards; "
+            "an earlier day lists all its races, but its cards have lost the "
+            "runners declared again since."
         ),
         "properties": {},
         "required": [],
@@ -126,7 +128,10 @@ TOOLS = [
             "such races, wins, last/average/median finishing position, the "
             "return from backing it with GBP 1 each time, and how far behind "
             "the winner it has finished. This is the tool for questions about "
-            "who is likely to win a specific race."
+            "who is likely to win a specific race. The field is complete only "
+            "for races on the newest card: for an earlier race, runners "
+            "declared again since are left out and the result says "
+            "runners_complete: false. Never present that list as the full field."
         ),
         "properties": {
             "date": {"type": "string", "description": "Race day as YYYY-MM-DD"},
@@ -138,9 +143,11 @@ TOOLS = [
     {
         "name": "get_horse_form",
         "description": (
-            "One horse's past runs: date, course, race type, distance, "
-            "finishing position, starting price, field size and how far behind "
-            "the winner it finished. Newest first."
+            "One horse's past runs, as printed on the newest card it has been "
+            "declared on: date, course, race type, distance, finishing "
+            "position, starting price, field size and how far behind the "
+            "winner it finished. Newest first. The first row is normally the "
+            "race it is declared in on that card, with no position yet."
         ),
         "properties": {
             "horse": {"type": "string", "description": "Horse's name"},
@@ -184,10 +191,11 @@ def _rows(web, sql, params=()):
 def _slim(web, payload, fields, limit, dedupe=False):
     """Keep only `fields` from an /api/horse/* style payload.
 
-    `dedupe` collapses a prerace_form answer to one row per race. A row there
-    is one past run, held once per card the horse was declared on, so the raw
-    count is several times the number of races it has run -- a model told a
-    horse has 1,332 runs will reason from 1,332.
+    `dedupe` collapses a prerace_form answer to one row per race. rbd_import
+    keeps a horse from its newest card only, so a run is normally held once,
+    but data loaded before that rule holds it once per card -- and a model told
+    a horse has 1,332 runs will reason from 1,332. Kept so the answer is right
+    either way.
     """
     if not payload.get("found"):
         return {"found": False, "suggestions": payload.get("suggestions", [])}
@@ -230,8 +238,14 @@ def run_tool(web, name, args):
                              str(args.get("track", "")).strip(),
                              str(args.get("time", "")).strip())
         names = [c["name"] for c in card["columns"]]
-        return {"race": card["race"],
-                "runners": [dict(zip(names, r)) for r in card["rows"]]}
+        out = {"race": card["race"],
+               "runners": [dict(zip(names, r)) for r in card["rows"]]}
+        if not card["complete"]:
+            out["runners_complete"] = False
+            out["note"] = ("Past race: the database keeps each horse only on its "
+                           "newest card, so runners declared on a later card are "
+                           "missing here. This list is not the full field.")
+        return out
 
     if name in ("get_horse_form", "get_horse_results"):
         horse = str(args.get("horse", "")).strip()
@@ -253,6 +267,14 @@ Answer from the tools, not from memory. The database is the only thing that \
 knows what this user actually holds, and it is the point of the tool. Call \
 list_card_dates first if the user has not said which day they mean -- the data \
 covers particular days, not all of racing.
+
+The database keeps each horse once, on the newest card it has been declared \
+on, with its whole form history read from that card. So the newest day's races \
+have their full fields, but an earlier day's race keeps only the runners not \
+declared since, and can have none. When get_race_card says runners_complete: \
+false, say plainly that the field shown is partial, do not rank it as if it \
+were the whole race, and never conclude that a horse did not run because it is \
+missing from an old card.
 
 When asked who will win a race, call get_race_card for that race and reason \
 from what it returns: the runners' records at this exact race type and \

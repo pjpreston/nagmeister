@@ -216,24 +216,66 @@ into a separate `prerace_form` table.
 ```bash
 python rbd_import.py --prerace                    # every day not yet loaded
 python rbd_import.py --prerace --date 06/09/2026  # just that day
-python rbd_import.py --prerace --force            # reload every day on disk
+python rbd_import.py --prerace --force            # reload every day on disk (the newest card still wins)
 python rbd_import.py --prerace --file "data/pre-race/2026-09/Daily - 06092026.xlsx"
 ```
 
 With no `--date` or `--file` it loads every pre-race workbook on disk whose card
-date is not already in `prerace_form`, oldest first — the same "everything not
+date is not already loaded, oldest first — the same "everything not
 yet loaded" default the results side has. So the routine is
 `rbd_prerace.py backfill` to fetch the days, then `rbd_import.py --prerace` to
 load the lot, rather than one day at a time.
 
-"Already loaded" is read straight from `prerace_form`, not from a ledger. The
-pre-race load deletes and re-inserts on `prerace_date`, so the rows in the table
-*are* the record of what is in, and the two cannot drift apart the way a
-separate ledger could.
+"Already loaded" is read from `races` as well as `prerace_form`. `prerace_form`
+alone cannot answer it any more: once every horse on a card has been declared
+again later, that card has no rows left (see below), and the default run would
+read it again every time. `races` holds every card's races and is never pruned.
 
-It is re-runnable by design: every load deletes whatever is already held for
-that day and re-inserts, inside one transaction, so a failure part-way leaves
-the previous load intact rather than a half-replaced day.
+It is re-runnable by design. Each load, inside one transaction, deletes whatever
+is already held for that day, removes the file's horses from earlier cards, and
+inserts the file — except for horses already held from a newer card. A failure
+part-way leaves the previous state intact, never a half-replaced day.
+
+#### One copy of each horse
+
+Every workbook carries each declared horse's *whole* form history, so storing
+each file in full held the same run once for every card that carried the horse —
+3.6M rows for about 444k distinct runs across 627 cards. So a horse is now held
+from **its newest card only**:
+
+- Loading the file for day D first deletes every existing row, for each horse in
+  that file, whose `prerace_date` is earlier than D. The newest file holds the
+  horse's complete history, results included, so almost nothing is lost by
+  dropping the older copies. (Checked on a copy of the database: only 2 runs with
+  a result were not in the newest file, and those are dropped.)
+- **The newest card wins** whatever order files are loaded in. Loading an older
+  day with `--date`, `--file` or `--force` does not bring back a horse that is
+  already held from a newer card: its rows in the older file are skipped. Loading
+  in either order gives the same table; oldest first is just the cheaper one.
+- `races` is **not** pruned. A load rebuilds its day's races from the whole file,
+  before any horse is skipped, so even an older day reloaded late keeps every race.
+
+The delete includes the horse's own *declaration* rows on earlier cards (the ones
+where `prerace_date = race_date`), and those are what a past race card in the
+Races tab is built from. So on a past day, runners declared again since have
+moved to their newer card: a race lists only the runners not seen since, and a
+race whose whole field has run again lists none. On the copy, 9,810 of 23,058
+past races ended up with no runners. Today's card is unaffected, and a horse's
+full history is still there on its newest card.
+
+A database loaded before this rule still holds the duplicates. Clearing
+`prerace_form` and `races` and running `rbd_import.py --prerace` again rebuilds
+both under it.
+
+The per-file output says what each load did:
+
+```
+  [3/3] Daily - 16102026.xlsx        7,591 rows   40 races, pruned 35 from older cards
+```
+
+`replaced N` is the day's own rows from a previous load of it, `pruned N` the
+older copies removed, and `skipped N already on newer cards` the rows an older
+file did not insert.
 
 Each workbook gets its own transaction and a file the loader cannot read is
 logged and stepped over rather than ending the run — the archive reaches back to
@@ -243,19 +285,23 @@ non-zero if anything failed.
 
 `--file` takes the card date from the filename. Passing `--date` as well
 overrides it; a file whose name carries no date needs `--date`, because
-`prerace_date` is the key the load deletes on and guessing it would file one
-day's card under another.
+`prerace_date` is the key the load deletes on and the one that decides which card
+is a horse's newest. A wrong date would do lasting damage — one too late prunes
+the horses from cards that are really newer — so the load also checks the file
+against the date: a card holds rows for that day's races and no run after it,
+and a file that fails either test is refused and rolled back, as is an empty one.
 
 The workbook has a sheet per meeting — named after the racecourse, so the names
 change daily — plus `Combined` and `Selections`. `Combined` is the union of the
 per-meeting sheets and the only reliably named one, so that is what loads.
 
 A row is **not** a runner in today's race. It is one *past run* by a horse
-declared today, tagged with `todays_race` (`YORK / 06/09/26/17:00`). So the
-table is the form book for today's card: each declared horse contributes one row
-dated today plus one row per previous run. That is why the delete key is
-`prerace_date`, the day the file is for, rather than `race_date`, which is
-historic.
+declared today, tagged with `todays_race` (`YORK / 06/09/26/17:00`). So a
+file is the form book for that day's card: each declared horse contributes one
+row dated that day plus one row per previous run. The table keeps each horse
+from its newest card only, so all of a horse's rows share one `prerace_date`.
+The load keys on `prerace_date`, the day the file is for, rather than
+`race_date`, which is historic.
 
 ```sql
 -- today's declared runners and how many past runs we hold for each
@@ -278,7 +324,8 @@ per race actually taking place, with `race_date`, `track`, `race_time`,
 `race_type` and `distance`. Around 37 races a day.
 
 ```sql
--- today's card with field sizes
+-- today's card with field sizes. Right for the newest card; a past day's
+-- races count only the runners not declared since (see One copy of each horse)
 SELECT r.track, r.race_time, r.race_type, r.distance,
        count(DISTINCT f.horse) AS runners
 FROM races r
@@ -297,10 +344,12 @@ was verified unique across the loaded cards. The column types are derived from
 `prerace_form` rather than restated, so they cannot drift from the table the
 card is built out of.
 
-The rebuild happens inside the same transaction as the pre-race load, so the
-card can never describe a different day's data than `prerace_form` holds —
-either both land or neither does — and re-running replaces the day rather than
-duplicating it.
+The rebuild happens inside the same transaction as the pre-race load, so a load
+lands both its rows and its card or neither, and re-running replaces the day
+rather than duplicating it. It is built from the file itself rather than from
+`prerace_form`, so a day reloaded after a newer one still gets every race. After
+that the two drift apart on purpose: later loads take the day's runners out of
+`prerace_form`, and its races stay in `races`.
 
 ```sql
 -- e.g. strike rate by trainer
@@ -339,7 +388,10 @@ order, so the favourite leads.
 
 The runners come from `/api/racecard?date=&track=&time=`, which matches
 `prerace_form` on `(race_date, track, race_time)` — the key of the `races`
-table. For a race on the card date those rows are the declared runners.
+table. For a race on the newest card those rows are the declared runners. On a
+past day they are only the runners not declared again since — a horse is kept
+from its newest card only (see [One copy of each horse](#one-copy-of-each-horse))
+— so the card says how many are *held*, and an emptied race says why it is empty.
 
 #### Form on the card
 
@@ -383,22 +435,21 @@ Three things the SQL is careful about, all in `RACECARD_STATS` and the
 `/api/racecard` query:
 
 - **Only earlier races count.** The ticket describes `#Races` as "rows − 1",
-  meaning exclude the horse's row for today. Going by date is the same thing for
-  the newest card and stays right for an older one, where later cards have since
-  added runs that are still in the future as far as that race is concerned.
-- **Rows are deduplicated to races.** A horse declared on several loaded cards
-  carries its whole history in each of them, so counting rows would count those
-  runs once per card.
+  meaning exclude the horse's row for today. Going by date is the same thing, and
+  stays right if a horse is ever held from a later card than this one.
+- **Rows are deduplicated to races.** A horse is held from one card, so a run is
+  normally held once; the `DISTINCT ON` is the guard for data loaded before that
+  rule, where a horse carried its whole history once per card.
 - **Non-finishers count once but are not averaged.** `PU`, `F`, `UR`, `BD` and
   `DSQ` land in `#Races`, where they belong, but `TRY_CAST` leaves them NULL so
   they cannot drag an average they have no meaningful value for. `Last Plc` is
   text for the same reason — it can legitimately read `PU`.
 
 The runner list is scoped to `prerace_date = race_date`, the card the race was
-declared on, which is also how the `races` table itself is built. Without that,
-once several cards are loaded a race's runners also appear as form history in
-later cards — carrying the actual SP rather than the morning's — and the same
-horse comes back twice.
+declared on, which is also how the `races` table itself is built: the
+declaration row, with the morning's SP, rather than the same run seen as history
+on a later card. With each horse held from its newest card only, it also means a
+past race lists just the horses for whom this is still that card.
 
 #### Horse history
 
@@ -410,15 +461,15 @@ distance. **×** closes it; viewing another card clears it.
 
 It comes from `/api/horsehistory?date=&horse=`. The `races` table only holds a
 race's date, track, time, type and distance, so the going, class, jockey and
-place are read from the horse's own `prerace_form` rows — the rows `races` is
-built from — deduplicated to one per race as the card is.
+place are read from the horse's own `prerace_form` rows. A horse is held from its
+newest card only, which was written after all of these runs, so they carry the
+places and the actual going.
 
-Which copy of a race is kept matters here. The row from the card a race was
-declared on was written before it was run, so it has no place and its going is
-the forecast; any later card carrying the run has the result. The history
-prefers the newest later card, and falls back to the declaration row only when
-there is nothing else (the race is on the newest loaded card, or the horse was
-withdrawn) — those show `—` for Place.
+For data loaded before that rule, which copy of a race is kept matters: the row
+from the card a race was declared on was written before it was run, so it has no
+place and its going is the forecast. The query prefers a later card's copy and
+falls back to the declaration row only when there is nothing else — those show
+`—` for Place.
 
 #### The form graph
 
@@ -596,11 +647,12 @@ names in `suggestions` — asking for `Rockley` suggests `Rockley Point`. Not
 finding a horse is a normal answer to a reasonable question, and the suggestions
 are what let a caller fix a spelling without a separate lookup endpoint.
 
-One caveat when counting runs from `/api/horse/form`: a row is one *past run*,
-and a run appears once per card the horse was declared on, so the same race can
-come back several times. Deduplicate on `(race_date, track, race_time)` before
-counting — see [Pre-race data](#pre-race-data) for why the table is shaped that
-way.
+One caveat when counting runs from `/api/horse/form`: the rows come from the
+horse's newest card, so besides one row per past run there is the row for the
+race that card declared it in (`race_date = prerace_date`, no place yet) — leave
+it out when counting. Data loaded before horses were kept from one card can hold
+a run once per card, so deduplicating on `(race_date, track, race_time)` is still
+safe — see [One copy of each horse](#one-copy-of-each-horse).
 
 The columns are described by the same `Dataset` entries the browsable tabs use,
 so these endpoints cannot drift from the schema the UI shows.
@@ -664,9 +716,12 @@ answer that read the data from one that did not:
 These are deliberately **narrower than `/api/horse/*`**. Those endpoints serve a
 programmatic caller and return every column; a busy jumper's form book is 400
 rows of 78 fields, which would crowd out the conversation it is meant to inform.
-`get_horse_form` also collapses its answer to one row per race — the raw table
-holds a run once per card the horse was declared on, and a model told a horse
-has 1,332 runs will reason from 1,332.
+`get_horse_form` also collapses its answer to one row per race — a horse is now
+held from one card, but data loaded before that held a run once per card, and a
+model told a horse has 1,332 runs will reason from 1,332. `get_race_card` adds
+`runners_complete: false` for a past race, whose card has lost the runners
+declared again since, and the system prompt tells the model not to treat that
+as the whole field.
 
 Each model also has its vendor's own web search, for the things the database
 does not hold — today's prices at the bookmakers, non-runners, going changes.

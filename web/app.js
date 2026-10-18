@@ -387,7 +387,10 @@ function createGrid(root, ds) {
       const q = new URLSearchParams({ date: pick.date, track: pick.track, time: pick.time });
       const data = await getJSON('/api/racecard?' + q);
       if (!data.rows.length) {
-        note(out, 'No runners recorded for this race.');
+        note(out, data.complete
+          ? 'No runners recorded for this race.'
+          : 'No runners held for this race: each horse is kept only from its newest card, '
+            + 'and every runner here has been declared again since.');
         return;
       }
       // built through the DOM rather than innerHTML: the cells are horse,
@@ -400,6 +403,11 @@ function createGrid(root, ds) {
       const count = document.createElement('span');
       count.className = 'hint';
       count.textContent = `${data.rows.length} runners`;
+      // a past card keeps only the horses not declared again since, so the
+      // count is not the field size -- say so rather than let it pass for one
+      if (!data.complete) {
+        count.textContent += ' held — runners declared again since are on their newer card';
+      }
       h3.append(count);
 
       const table = document.createElement('table');

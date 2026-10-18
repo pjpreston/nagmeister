@@ -50,8 +50,8 @@ WEB_DIR = Path(__file__).parent / "web"
 MAX_MATCHES = 20_000  # cap on cells returned by one search
 PAGE_MAX = 500
 # cap on rows one /api/horse/* call returns. Generous, because "all of it" is
-# the point of those endpoints, but not unbounded: a busy jumper already has
-# 400+ prerace_form rows of 78 columns each, and a caller that asks for every
+# the point of those endpoints, but not unbounded: a busy jumper's form book
+# runs to hundreds of prerace_form rows of 78 columns each, and a caller that asks for every
 # horse in a race should not be able to ask for tens of megabytes by accident.
 AGENT_MAX = 1000
 SUGGEST_MAX = 10  # near-miss names offered when a horse is not found
@@ -175,7 +175,9 @@ COLUMN_DESC = {
                      "empty where the horse did not finish"),
     "one_pnd_win": ("What £1 to win would have returned, stake included. "
                     "0 if the horse did not win"),
-    "prerace_date": "The card this row was read from -- the morning it was published",
+    "prerace_date": ("The card this row was read from -- the morning it was published. "
+                     "Each horse is kept from its newest card only, so an older card "
+                     "holds just the horses not declared since"),
     "todays_race": "The race on that card this horse was declared for",
     "filename": "Source workbook this row was loaded from",
 
@@ -614,8 +616,10 @@ def racecard(request: Request):
     """The runners in one race, for the Races tab's drill-down.
 
     A race is identified by (race_date, track, race_time) -- the key of the
-    races table. Matching prerace_form on those three gives the horses that ran
-    in that race; for a race on the card date those are the declared runners.
+    races table. Matching prerace_form on those three gives the race's declared
+    runners -- but a horse is kept only from its newest card, so on a past day
+    only the runners not declared again since are left, and a race whose whole
+    field has run again has none. `complete` says which kind of card this is.
 
     Each runner also carries its record over this race's own race type and
     distance (RACECARD_STATS), so the card can be read as form rather than just
@@ -648,10 +652,11 @@ def race_card(day, track, time_):
               AND track = ? AND race_time = TRY_CAST(? AS TIME)
         ),
         -- prerace_date = race_date restricts this to the card the race was
-        -- declared on, which is also how the races table itself is built. Once
-        -- several cards are loaded a race's runners also appear as form history
-        -- in later cards, with the actual SP rather than the morning's, and
-        -- without this the same horse comes back twice.
+        -- declared on, which is also how the races table itself is built: the
+        -- declaration row, with the morning's SP, rather than the same run
+        -- seen as history on a later card. Since a horse is kept from its
+        -- newest card only, a past race lists just the horses for whom this
+        -- is still that card.
         runners AS (
             SELECT DISTINCT {", ".join(f'"{c}"' for c, _ in RACECARD_FIELDS)}
             FROM {PRERACE_TABLE}
@@ -659,12 +664,11 @@ def race_card(day, track, time_):
               AND track = ? AND race_time = TRY_CAST(? AS TIME)
               AND prerace_date = race_date
         ),
-        -- one row per past race, not per row held: a horse declared on several
-        -- of the loaded cards carries its whole history in each of them, so
-        -- counting rows would count those runs once per card. DISTINCT ON keys
-        -- on the race alone, so this stays one row per race even if two cards
-        -- ever disagree about a detail of it -- they do not today, but a plain
-        -- DISTINCT over the payload would silently start double-counting.
+        -- one row per past race, not per row held. rbd_import keeps a horse
+        -- from one card only, so a run is normally held once; DISTINCT ON is
+        -- the guard for data loaded before that rule, where a horse carried its
+        -- whole history once per card. It keys on the race alone, so two
+        -- copies that disagree about a detail still count once.
         form AS (
             SELECT DISTINCT ON (f.horse, f.race_date, f.track, f.race_time)
                    f.horse, f.race_date, f.race_time, f.track, f.place,
@@ -676,12 +680,10 @@ def race_card(day, track, time_):
               AND f.distance = race.distance
               -- strictly earlier races only. The ticket describes this as
               -- "rows - 1", which excludes the horse's row for today; going by
-              -- date is the same thing for the latest card and stays right for
-              -- an earlier one, where later cards have since added runs that
-              -- are still in the future as far as this race is concerned.
+              -- date is the same thing, and stays right if a horse is ever held
+              -- from a later card than this one.
               AND f.race_date < TRY_CAST(? AS DATE)
-            -- DISTINCT ON takes the first row per key, so name one: the
-            -- earliest card that carried this run
+            -- DISTINCT ON takes the first row per key, so name one
             ORDER BY f.horse, f.race_date, f.track, f.race_time, f.prerace_date
         ),
         stats AS (
@@ -704,7 +706,27 @@ def race_card(day, track, time_):
         + [{"name": a, "label": l, "type": t, "desc": describe(None, a, t)}
            for a, l, t, _ in RACECARD_STATS],
         "rows": [[cell(v) for v in r] for r in rows],
+        "complete": card_complete(day, track, time_),
     }
+
+
+def card_complete(day, track, time_):
+    """Whether a race's card still holds its whole field.
+
+    Only a past race can have lost runners to a later card, so this is false
+    just for a race that exists and is older than the newest card. Compared as
+    dates in SQL, so any spelling of the day DuckDB reads compares correctly,
+    and a race that is not there, or a day not loaded yet, is not mislabelled
+    as a partial past card.
+    """
+    return db().execute(
+        f"""SELECT NOT EXISTS (
+                SELECT 1 FROM {RACES_TABLE}
+                WHERE race_date = TRY_CAST(? AS DATE)
+                  AND track = ? AND race_time = TRY_CAST(? AS TIME)
+                  AND race_date < (SELECT max(race_date) FROM {RACES_TABLE}))""",
+        [day, track, time_],
+    ).fetchone()[0]
 
 
 @app.get("/api/horseform")
@@ -792,8 +814,9 @@ def horsehistory(request: Request):
     Unlike the card's form stats this is not limited to the race's own type and
     distance: it is the horse's whole record, as a form book would list it. The
     races table only holds a race's date, track, time, type and distance, so the
-    going, class, jockey and place come from the horse's prerace_form rows --
-    the same rows the races table is built out of.
+    going, class, jockey and place come from the horse's prerace_form rows,
+    which since a horse is kept from its newest card only all come from that
+    card -- written after every one of these runs, so they carry the results.
     """
     day = (request.query_params.get("date") or "").strip()
     horse = (request.query_params.get("horse") or "").strip()
@@ -806,12 +829,13 @@ def horse_history(horse, day):
     """The body of /api/horsehistory, callable without a Request."""
     cols = ", ".join(f'"{c}"' for c, _ in HISTORY_FIELDS)
     sql = f"""
-        -- one row per race, as on the card. Which copy is kept matters here:
-        -- the row from the card a race was declared on was written before it
-        -- was run, so it has no place and the going is the forecast. Any later
-        -- card that carries the run has the result, so prefer one of those,
-        -- the newest; the declaration row is only used when it is all there is
-        -- (the race was on the newest loaded card, or the horse was withdrawn).
+        -- one row per race, as on the card. A horse is normally held from one
+        -- card, so there is one copy; for data loaded before that rule, which
+        -- copy is kept matters. The row from the card a race was declared on
+        -- was written before it was run, so it has no place and the going is
+        -- the forecast. Any later card that carries the run has the result, so
+        -- prefer one of those, the newest; the declaration row is only used
+        -- when it is all there is.
         SELECT {cols} FROM (
             SELECT DISTINCT ON (race_date, track, race_time) *
             FROM {PRERACE_TABLE}
@@ -926,9 +950,12 @@ OFFSET_Q = Query(0, ge=0, description="Rows to skip, for paging through `total`"
 
 @app.get("/api/horse/form", summary="Every prerace_form row for one horse")
 def horse_form(horse: str = HORSE_Q, limit: int = LIMIT_Q, offset: int = OFFSET_Q):
-    """One horse's whole form book: a row per past run, from every card it was
-    declared on. A run held on more than one card appears once per card, so
-    deduplicate on (race_date, track, race_time) before counting runs."""
+    """One horse's whole form book, from the newest card it was declared on: a
+    row per past run, plus that card's row for the race it was declared in
+    (race_date equal to prerace_date, no place yet) -- leave that one out when
+    counting runs. Only a horse's newest card is kept, so each run appears once;
+    data loaded before that rule can still hold a run once per card, so
+    deduplicating on (race_date, track, race_time) remains safe."""
     return horse_rows(DATASETS["form"], horse, limit, offset)
 
 
