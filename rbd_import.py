@@ -25,9 +25,15 @@ this with no arguments. --force reloads files that are already in.
     python rbd_import.py --prerace --date 06/09/2026
 
 --prerace works the same way against data/pre-race, skipping card dates
-already in `prerace_form`. It loads one workbook per transaction and steps
-over a file it cannot read, so a batch containing older files of a different
-layout still loads the ones it can.
+already loaded. It loads one workbook per transaction and steps over a file it
+cannot read, so a batch containing older files of a different layout still
+loads the ones it can.
+
+Each pre-race workbook carries every declared horse's whole form history, so a
+horse is kept only from its newest card: loading day D deletes the rows of
+every horse in D's file from earlier cards -- their declaration rows there
+included, so past race cards lose those runners while `races` keeps the races
+-- and a file older than a horse's newest card does not put it back.
 
 Why DuckDB: it is free and embedded (no server to run), it reads .xlsx
 natively so there is no pandas/openpyxl dependency in the load path, and it
@@ -245,9 +251,11 @@ DERIVED_COLUMNS = [
 #
 # A row is not a runner in today's race: it is one *past run* by a horse that is
 # declared today, tagged in the last column with the race it is running in
-# today. So the table is the form book for today's card. That is why the delete
-# key for a re-run is prerace_date -- the day the file is for -- and not the
-# race_date on the row, which is historic.
+# today. So a file is the form book for that day's card, and since every card
+# repeats its horses' whole history, the table keeps each horse from its newest
+# card only (load_prerace). prerace_date -- the day the file is for -- is the key
+# for all of it: a re-run deletes on it, and it decides which card is newest.
+# The race_date on a row is historic.
 #
 # Types come from scanning every value in the available workbooks, same as
 # above. The ones that bite:
@@ -379,8 +387,8 @@ def ddl():
         f"    {'filename':<22} VARCHAR NOT NULL,\n{derived}\n);\n\n"
         f"CREATE TABLE IF NOT EXISTS {PRERACE_TABLE} (\n{pre},\n"
         # the day the workbook is for. race_date above is the historic date of
-        # the run being described, so this is what identifies a load and what a
-        # re-run deletes on.
+        # the run being described, so this is what a re-run deletes on and what
+        # decides which card is a horse's newest -- the only one it is kept from.
         f"    {'prerace_date':<22} DATE NOT NULL,\n"
         f"    {'filename':<22} VARCHAR NOT NULL\n);\n\n"
         f"CREATE TABLE IF NOT EXISTS {RACES_TABLE} (\n"
@@ -578,25 +586,49 @@ def find_prerace_files(data_dir):
 
 
 def prerace_days_loaded(con):
-    """The card dates already in prerace_form.
+    """The card dates already loaded.
 
-    The pre-race load has no ledger of its own and does not need one: it
-    deletes and re-inserts on prerace_date, so the rows in the table *are* the
-    record of what is loaded, and the two cannot drift apart the way a
-    separate ledger could.
+    Read from races as well as prerace_form, because prerace_form alone no
+    longer answers it: a horse is kept only from its newest card, so once every
+    horse on a card has been declared again later that card has no rows left,
+    and the default run would read the workbook again every time. races holds
+    every card's races and is never pruned. prerace_form still counts too, for
+    data loaded before races existed.
     """
     return {
-        r[0] for r in
-        con.execute(f"SELECT DISTINCT prerace_date FROM {PRERACE_TABLE}").fetchall()
+        r[0] for r in con.execute(
+            f"SELECT race_date FROM {RACES_TABLE}"
+            f" UNION SELECT prerace_date FROM {PRERACE_TABLE}"
+        ).fetchall()
     }
 
 
-def load_prerace(con, path, day):
-    """Load one pre-race workbook, replacing anything already held for that day.
+PRERACE_STAGE = "prerace_stage"
 
-    Re-runnable by construction: the delete and the insert share a transaction,
-    so a failure part-way leaves the previous load intact rather than a table
-    with the old rows gone and the new ones missing.
+
+def load_prerace(con, path, day):
+    """Load one pre-race workbook, keeping each horse from its newest card only.
+
+    A workbook carries every declared horse's whole form history, so storing
+    each file in full would hold the same run once per card the horse was ever
+    on. Instead, inside one transaction:
+
+      1. the file is read into a temp table, once;
+      2. the day's races are rebuilt from the whole file;
+      3. anything already held for this day is deleted (a re-run);
+      4. every row from an *earlier* card is deleted for each horse in the
+         file -- including its declaration rows there, so a past race card
+         loses the runners that have been declared again since;
+      5. the file's rows are inserted, except for horses already held from a
+         *newer* card. Without this, loading an older day after a newer one
+         (--date, --file, --force) would bring the duplicates straight back.
+
+    4 and 5 together mean the newest card wins whatever order files are loaded
+    in. The deletes and the insert share the transaction, so a failure part-way
+    leaves the previous state intact.
+
+    Returns (rows inserted, rows replaced for this day, rows pruned from
+    earlier cards, rows skipped for newer cards, races).
     """
     path = Path(path)
     src = source_columns(con, path, sheet=PRERACE_SHEET, n=N_PRERACE_COLS)
@@ -608,34 +640,74 @@ def load_prerace(con, path, day):
 
     con.execute("BEGIN TRANSACTION")
     try:
-        removed = con.execute(
-            f"SELECT count(*) FROM {PRERACE_TABLE} WHERE prerace_date = ?", [day]
-        ).fetchone()[0]
-        con.execute(f"DELETE FROM {PRERACE_TABLE} WHERE prerace_date = ?", [day])
         con.execute(
-            f"INSERT INTO {PRERACE_TABLE} SELECT\n       {selects},\n"
+            f"CREATE OR REPLACE TEMP TABLE {PRERACE_STAGE} AS SELECT\n       {selects},\n"
             f"       DATE '{day:%Y-%m-%d}' AS prerace_date,\n"
             f"       {sq(path.name)} AS filename\n"
             f"FROM read_xlsx({sq(path)}, sheet={sq(PRERACE_SHEET)}, all_varchar=true)\n"
             f"WHERE {not_blank}"
         )
-        n = con.execute(
-            f"SELECT count(*) FROM {PRERACE_TABLE} WHERE prerace_date = ?", [day]
-        ).fetchone()[0]
+        check_prerace_stage(con, path, day)
         races = refresh_races(con, day)
+        removed = con.execute(
+            f"DELETE FROM {PRERACE_TABLE} WHERE prerace_date = ?", [day]
+        ).fetchone()[0]
+        pruned = con.execute(
+            f"DELETE FROM {PRERACE_TABLE} WHERE prerace_date < ?"
+            f" AND horse IN (SELECT horse FROM {PRERACE_STAGE})",
+            [day],
+        ).fetchone()[0]
+        # NOT EXISTS rather than NOT IN: a NULL horse anywhere in a NOT IN
+        # subquery makes it NULL for every row, and nothing would go in
+        inserted = con.execute(
+            f"INSERT INTO {PRERACE_TABLE} SELECT s.* FROM {PRERACE_STAGE} s"
+            f" WHERE NOT EXISTS (SELECT 1 FROM {PRERACE_TABLE} f"
+            f"  WHERE f.horse = s.horse AND f.prerace_date > s.prerace_date)"
+        ).fetchone()[0]
+        staged = con.execute(f"SELECT count(*) FROM {PRERACE_STAGE}").fetchone()[0]
+        con.execute(f"DROP TABLE {PRERACE_STAGE}")
         con.execute("COMMIT")
     except Exception:
         con.execute("ROLLBACK")
         raise
-    return n, removed, races
+    return inserted, removed, pruned, staged - inserted, races
+
+
+def check_prerace_stage(con, path, day):
+    """Refuse a workbook that is not the card for `day`.
+
+    The date decides which card is a horse's newest, so a wrong one does
+    lasting damage: a date too late prunes the horses' rows from cards that are
+    really newer, and then skips those cards when they are reloaded. Every card
+    holds rows for its own day's races and no run later than that, so a file
+    without the first, or with a run later than the day, is the wrong day (or
+    empty, or a truncated download -- which would otherwise wipe the day it
+    replaces).
+    """
+    staged, declared, latest = con.execute(
+        f"SELECT count(*), count(*) FILTER (WHERE race_date = prerace_date),"
+        f" max(race_date) FROM {PRERACE_STAGE}"
+    ).fetchone()
+    if not staged:
+        raise ValueError(f"no rows in sheet {PRERACE_SHEET!r}")
+    if not declared or latest > day:
+        raise ValueError(
+            f"not the card for {day:%d/%m/%Y}: {declared} rows for that day's"
+            f" races, latest run {latest}")
 
 
 def refresh_races(con, day):
-    """Rebuild the race card for one day from the rows just loaded.
+    """Rebuild the race card for one day from the workbook being loaded.
 
-    Called inside load_prerace's transaction, so the card cannot end up
-    describing a different day's data than prerace_form holds -- either both
-    land or neither does.
+    Called inside load_prerace's transaction, so a load lands its rows and its
+    card together or neither.
+
+    Built from the staged file rather than prerace_form, because prerace_form
+    no longer holds a whole card: an older day reloaded after a newer one skips
+    the horses already on the newer card, and building from what went in would
+    drop any race whose runners have all run again. races itself is never
+    pruned, so a past day keeps every race even after later cards have taken
+    its runners.
 
     Restricted to race_date = prerace_date. The rest of a card's rows are the
     declared horses' form history, roughly 4,900 historic races per file, which
@@ -648,9 +720,8 @@ def refresh_races(con, day):
     con.execute(f"DELETE FROM {RACES_TABLE} WHERE race_date = ?", [day])
     con.execute(
         f"INSERT INTO {RACES_TABLE} ({cols})"
-        f" SELECT DISTINCT {cols} FROM {PRERACE_TABLE}"
-        f" WHERE prerace_date = ? AND race_date = prerace_date",
-        [day],
+        f" SELECT DISTINCT {cols} FROM {PRERACE_STAGE}"
+        f" WHERE race_date = prerace_date",
     )
     return con.execute(
         f"SELECT count(*) FROM {RACES_TABLE} WHERE race_date = ?", [day]
@@ -661,7 +732,7 @@ def load_prerace_files(con, args):
     """The --prerace side of main(). Returns the exit code.
 
     With no --date or --file this loads every pre-race workbook on disk whose
-    card date is not already in prerace_form, oldest first -- the same
+    card date is not already loaded, oldest first -- the same
     "everything not yet loaded" default the results side has, so
     `rbd_prerace.py backfill` followed by `rbd_import.py --prerace` picks up
     the lot rather than only the day it happens to be run on.
@@ -677,7 +748,9 @@ def load_prerace_files(con, args):
         if not path.exists():
             raise SystemExit(f"no such file: {args.file}")
         # the file's own name wins over the clock: tagging an old card with
-        # today's date would file it under the wrong day and replace that day
+        # today's date would file it under the wrong day, replace that day and
+        # prune the horses from cards that are really newer. load_prerace also
+        # refuses a file whose contents are not that day's card.
         day = parse_date(args.date) if args.date else prerace_day(path.name)
         if not day:
             raise SystemExit(
@@ -696,23 +769,32 @@ def load_prerace_files(con, args):
         todo = [(d, p) for d, p in found if args.force or d not in known]
         print(f"{len(found)} pre-race file(s) found, {len(todo)} to load")
 
-    total, races_total, failed = 0, 0, []
+    # Oldest first is not needed for correctness -- the newest card wins in any
+    # order -- but it is the cheap order: each file prunes the one before it
+    # once, where newest first would read every older file only to skip it.
+    total, pruned_total, races_total, failed = 0, 0, 0, []
     for i, (day, path) in enumerate(todo, 1):
         try:
-            n, removed, races = load_prerace(con, path, day)
+            n, removed, pruned, skipped, races = load_prerace(con, path, day)
         except Exception as e:
             print(f"  [{i}/{len(todo)}] {path.name:<26} FAILED: {e}", file=sys.stderr)
             failed.append(path.name)
             continue
         total += n
+        pruned_total += pruned
         races_total += races
-        note = f", replaced {removed:,}" if removed else ""
+        note = "".join([
+            f", replaced {removed:,}" if removed else "",
+            f", pruned {pruned:,} from older cards" if pruned else "",
+            f", skipped {skipped:,} already on newer cards" if skipped else "",
+        ])
         print(f"  [{i}/{len(todo)}] {path.name:<26} {n:>7,} rows"
               f"  {races:>3} races{note}")
 
     if todo:
         print(f"\ninserted {total:,} rows and {races_total:,} races"
-              f" from {len(todo) - len(failed)} file(s)")
+              f" from {len(todo) - len(failed)} file(s)"
+              + (f", pruning {pruned_total:,} older copies" if pruned_total else ""))
     if failed:
         print(f"{len(failed)} failed: {', '.join(failed[:5])}"
               f"{' ...' if len(failed) > 5 else ''}", file=sys.stderr)
@@ -764,14 +846,16 @@ def show_prerace_status(con):
     days, rows = con.execute(
         f"SELECT count(DISTINCT prerace_date), count(*) FROM {PRERACE_TABLE}"
     ).fetchone()
-    print(f"\n{days} pre-race day(s), {rows:,} rows in {PRERACE_TABLE}")
+    # a horse is held from its newest card only, so an older card shows just
+    # the horses not declared since, and may have no rows at all
+    print(f"\n{days} card(s) holding rows, {rows:,} rows in {PRERACE_TABLE}")
     if not days:
         return
     for day, n, horses in con.execute(
         f"SELECT prerace_date, count(*), count(DISTINCT horse) FROM {PRERACE_TABLE}"
         f" GROUP BY 1 ORDER BY 1 DESC LIMIT 5"
     ).fetchall():
-        print(f"  {day}  {n:>7,} rows  {horses:>4} horses declared")
+        print(f"  {day}  {n:>7,} rows  {horses:>4} horses held from this card")
     rdays, rraces = con.execute(
         f"SELECT count(DISTINCT race_date), count(*) FROM {RACES_TABLE}"
     ).fetchone()
@@ -792,7 +876,9 @@ def main(argv=None):
     ap.add_argument("--prerace", action="store_true",
                     help="load pre-race workbooks instead of the results files;"
                          " every day not already loaded unless --date or --file"
-                         " is given")
+                         " is given. Each horse is kept from its newest card"
+                         " only: a load removes the file's horses from earlier"
+                         " cards, and an older file never brings them back")
     ap.add_argument("--prerace-dir", default=DEFAULT_PRERACE_DIR,
                     help=f"pre-race workbook root (default {DEFAULT_PRERACE_DIR})")
     args = ap.parse_args(argv)
