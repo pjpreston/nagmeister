@@ -400,6 +400,26 @@ once several cards are loaded a race's runners also appear as form history in
 later cards — carrying the actual SP rather than the morning's — and the same
 horse comes back twice.
 
+#### Horse history
+
+Right-click a horse's name on the card and choose **Show history** to list every
+race it ran before this one, most recent first, beneath the card: date, time,
+track, going, distance, class, jockey and the place it finished. Unlike the
+form columns this is the horse's whole record, not just races of this type and
+distance. **×** closes it; viewing another card clears it.
+
+It comes from `/api/horsehistory?date=&horse=`. The `races` table only holds a
+race's date, track, time, type and distance, so the going, class, jockey and
+place are read from the horse's own `prerace_form` rows — the rows `races` is
+built from — deduplicated to one per race as the card is.
+
+Which copy of a race is kept matters here. The row from the card a race was
+declared on was written before it was run, so it has no place and its going is
+the forecast; any later card carrying the run has the result. The history
+prefers the newest later card, and falls back to the declaration row only when
+there is nothing else (the race is on the newest loaded card, or the horse was
+withdrawn) — those show `—` for Place.
+
 #### The form graph
 
 Clicking a runner plots its form beneath the card. The x axis is always the date
